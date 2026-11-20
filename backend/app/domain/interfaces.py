@@ -1,210 +1,180 @@
 """
 Domain Interface Contracts for Cloud-Native AI Coding Harness.
 
-Adheres strictly to SOLID Principles:
-- ISP (Interface Segregation Principle): Dedicated, thin interfaces (IExecutionTerminal, IFileAccess, ILogStreamer).
-- LSP (Liskov Substitution Principle): Any ISandboxEnvironment can be substituted (Docker, LocalProcess, E2B).
-- DIP (Dependency Inversion Principle): High-level orchestrators depend on these abstractions.
+Fixed contracts adhering strictly to Spec §3.2:
+- Dependencies point strictly inward.
+- Defined as runtime-checkable typing.Protocol classes.
+- All sandbox implementations, including FakeSandbox, must be substitutable.
 """
 
-from abc import ABC, abstractmethod
-from typing import AsyncGenerator, Callable, Dict, List, Optional, Any
+from __future__ import annotations
+
+import builtins
+from collections.abc import AsyncIterator
+from typing import Any, Protocol, runtime_checkable
+
 from .models import (
-    CommandResult,
-    FileDiff,
-    ToolCallDefinition,
-    ToolExecutionResult,
-    AgentThoughtStep,
-    AgentSession,
-    SessionStatus
+    AuthenticatedUser,
+    ExecEvent,
+    LLMMessage,
+    LLMResponse,
+    LogEvent,
+    Run,
+    RunEvent,
+    RunStatus,
+    SandboxSpec,
+    ToolDefinition,
 )
 
 
-class IExecutionTerminal(ABC):
-    """ISP: Thin interface dedicated exclusively to executing commands and streaming terminal I/O."""
+@runtime_checkable
+class IExecutionTerminal(Protocol):
+    """Execution terminal contract for running commands and streaming output in the sandbox."""
 
-    @abstractmethod
-    async def execute_command(
+    def run(
         self,
         command: str,
-        working_dir: Optional[str] = None,
-        timeout_seconds: int = 60,
-        env_vars: Optional[Dict[str, str]] = None,
-        on_stdout: Optional[Callable[[str], None]] = None,
-        on_stderr: Optional[Callable[[str], None]] = None,
-    ) -> CommandResult:
-        """Executes a command within the isolated sandbox environment."""
-        pass
+        cwd: str = "/workspace",
+        timeout: float | None = None,
+    ) -> AsyncIterator[ExecEvent]:
+        """Runs a command inside the sandbox, yielding stdout/stderr events."""
+        ...
 
-    @abstractmethod
-    async def kill_process(self, process_id: Optional[str] = None) -> bool:
-        """Kills any active process running in the sandbox."""
-        pass
+    async def cancel_current(self) -> None:
+        """Cancels the currently in-flight command in the sandbox."""
+        ...
 
 
-class IFileAccess(ABC):
-    """ISP: Thin interface dedicated exclusively to bidirectional file and workspace operations."""
+@runtime_checkable
+class IFileAccess(Protocol):
+    """File access contract for reading, writing, and transferring workspace files."""
 
-    @abstractmethod
-    async def read_file(self, relative_path: str) -> str:
-        """Reads content of a file within the workspace."""
-        pass
+    async def read_file(self, path: str) -> str:
+        """Reads text content of a file within the sandbox /workspace."""
+        ...
 
-    @abstractmethod
-    async def write_file(self, relative_path: str, content: str) -> bool:
-        """Writes content to a file in the workspace, creating intermediate directories."""
-        pass
+    async def write_file(self, path: str, content: str) -> None:
+        """Writes text content to a file in /workspace, creating intermediate directories."""
+        ...
 
-    @abstractmethod
-    async def list_files(self, relative_path: str = ".", recursive: bool = True) -> List[str]:
-        """Lists files within the workspace."""
-        pass
+    async def list_dir(self, path: str = ".") -> list[str]:
+        """Lists relative paths of entries within the given directory."""
+        ...
 
-    @abstractmethod
-    async def file_exists(self, relative_path: str) -> bool:
-        """Checks if a file exists in the workspace."""
-        pass
+    async def upload_workspace(self, tar_gz: bytes) -> None:
+        """Unpacks a tar.gz archive into the /workspace directory."""
+        ...
 
-    @abstractmethod
-    async def get_workspace_diff(self) -> List[FileDiff]:
-        """Computes git diff between current workspace state and original baseline."""
-        pass
-
-    @abstractmethod
-    async def export_git_patch(self) -> str:
-        """Exports a standard git patch of all uncommitted workspace changes."""
-        pass
+    async def download_workspace(self) -> bytes:
+        """Packs the /workspace directory into a tar.gz archive and returns its bytes."""
+        ...
 
 
-class ILogStreamer(ABC):
-    """ISP: Thin interface for real-time telemetry and streaming log output."""
+@runtime_checkable
+class ILogStreamer(Protocol):
+    """Log streaming contract for telemetry, replaying from start then live."""
 
-    @abstractmethod
-    async def stream_logs(self) -> AsyncGenerator[str, None]:
-        """Streams real-time stdout/stderr from the sandbox."""
-        pass
-
-    @abstractmethod
-    def push_log(self, stream_type: str, text: str) -> None:
-        """Pushes a log line to active listeners."""
-        pass
+    def subscribe(self) -> AsyncIterator[LogEvent]:
+        """Subscribes to execution logs, replaying past events from start, then streaming live."""
+        ...
 
 
-class ISandboxEnvironment(IExecutionTerminal, IFileAccess, ILogStreamer, ABC):
-    """
-    LSP & ISP: Unified sandbox contract combining execution, file access, and log streaming.
-    All providers (Docker, LocalProcess, E2B, Modal) implement this identical interface.
-    """
-
-    @abstractmethod
-    async def initialize(self, repo_url_or_path: Optional[str] = None, base_commit: Optional[str] = None) -> bool:
-        """Provisions the sandbox, mounts workspace, and prepares warm runtime environment."""
-        pass
-
-    @abstractmethod
-    async def cleanup(self) -> None:
-        """Tears down container/micro-VM and cleans up ephemeral resources."""
-        pass
-
-    @abstractmethod
-    async def is_healthy(self) -> bool:
-        """Checks sandbox health and readiness."""
-        pass
+@runtime_checkable
+class ISandboxEnvironment(IExecutionTerminal, IFileAccess, ILogStreamer, Protocol):
+    """Unified sandbox contract combining terminal execution, file access, and log streaming."""
 
     @property
-    @abstractmethod
-    def sandbox_id(self) -> str:
-        """Returns the unique identifier for this sandbox instance."""
-        pass
+    def id(self) -> str:
+        """Returns the unique identifier of the sandbox container."""
+        ...
 
-    @property
-    @abstractmethod
-    def workspace_path(self) -> str:
-        """Returns the absolute path to the sandbox workspace."""
-        pass
+    async def start(self) -> None:
+        """Starts or initializes the sandbox container environment."""
+        ...
+
+    async def stop(self) -> None:
+        """Stops and tears down the sandbox container (idempotent)."""
+        ...
 
 
-class ILLMProvider(ABC):
-    """
-    OCP & DIP: Abstract contract for LLM inference.
-    Extensible to OpenAI, Anthropic, Gemini, Local LLMs, or Mock simulation runners.
-    """
+@runtime_checkable
+class ISandboxProvider(Protocol):
+    """Sandbox provider contract for acquiring warmed or cold container environments."""
 
-    @abstractmethod
-    async def generate_thought_and_action(
+    async def acquire(self, spec: SandboxSpec) -> ISandboxEnvironment:
+        """Acquires a sandbox environment matching the resource specification."""
+        ...
+
+
+@runtime_checkable
+class ILLMProvider(Protocol):
+    """LLM provider contract for chat completions with tool definitions."""
+
+    async def complete(
         self,
-        system_prompt: str,
-        task_description: str,
-        context_summary: str,
-        history: List[AgentThoughtStep],
-        available_tools: List[Dict[str, Any]],
-        injected_guidance: Optional[str] = None
-    ) -> AgentThoughtStep:
-        """Generates reasoning, plan update, and next tool action."""
-        pass
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition],
+    ) -> LLMResponse:
+        """Executes a chat completion call with retry and exponential backoff."""
+        ...
 
-    @abstractmethod
-    async def evaluate_test_results(
+
+@runtime_checkable
+class IObjectStorage(Protocol):
+    """Object storage contract for storing artifacts and generating presigned URLs."""
+
+    async def put(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> None:
+        """Stores binary object data at the specified key."""
+        ...
+
+    async def get(self, key: str) -> bytes:
+        """Retrieves binary object data from the specified key."""
+        ...
+
+    def presigned_url(self, key: str, ttl: int = 3600) -> str:
+        """Generates a public presigned URL for downloading the artifact."""
+        ...
+
+
+@runtime_checkable
+class IRunRepository(Protocol):
+    """Run repository contract for persisting run state, status transitions, and events."""
+
+    async def create(self, run: Run) -> Run:
+        """Persists a newly created run."""
+        ...
+
+    async def get(self, run_id: str, user_id: str | None = None) -> Run | None:
+        """Retrieves a run by ID, enforcing user isolation when user_id is provided."""
+        ...
+
+    async def list(self, user_id: str | None = None) -> builtins.list[Run]:
+        """Lists runs scoped to user_id, or all runs if unauthenticated/admin."""
+        ...
+
+    async def update_status(
         self,
-        test_output: str,
-        exit_code: int,
-        attempted_fix: str,
-        history: List[AgentThoughtStep]
-    ) -> Dict[str, Any]:
-        """Evaluates whether tests passed, failed, or require self-correction."""
-        pass
+        run_id: str,
+        status: RunStatus,
+        error_reason: str | None = None,
+        is_pausing: bool | None = None,
+    ) -> Run:
+        """Updates lifecycle status, error reason, or is_pausing flag atomically."""
+        ...
+
+    async def append_event(self, run_id: str, event_data: dict[str, Any]) -> RunEvent:
+        """Appends an event with a monotonically increasing, gap-free sequence number."""
+        ...
+
+    async def list_events(self, run_id: str, after_seq: int | None = None) -> builtins.list[RunEvent]:
+        """Lists events for a run ordered by sequence number, optionally filtered after_seq."""
+        ...
 
 
-class ISessionRepository(ABC):
-    """DIP: Repository contract for session metadata persistence."""
+@runtime_checkable
+class IAuthProvider(Protocol):
+    """Authentication provider contract for request authentication."""
 
-    @abstractmethod
-    async def create_session(self, session: AgentSession) -> AgentSession:
-        pass
-
-    @abstractmethod
-    async def get_session(self, session_id: str) -> Optional[AgentSession]:
-        pass
-
-    @abstractmethod
-    async def list_sessions(self) -> List[AgentSession]:
-        pass
-
-    @abstractmethod
-    async def update_session(self, session: AgentSession) -> AgentSession:
-        pass
-
-    @abstractmethod
-    async def delete_session(self, session_id: str) -> bool:
-        pass
-
-
-class IArtifactStore(ABC):
-    """DIP: Object storage abstraction for patch files, logs, and repo snapshots."""
-
-    @abstractmethod
-    async def store_patch(self, session_id: str, patch_content: str) -> str:
-        """Stores patch file and returns download URI or identifier."""
-        pass
-
-    @abstractmethod
-    async def get_patch(self, session_id: str) -> Optional[str]:
-        """Retrieves raw patch content."""
-        pass
-
-    @abstractmethod
-    async def store_logs(self, session_id: str, logs: str) -> str:
-        """Stores execution log bundle."""
-        pass
-
-
-class IEventBus(ABC):
-    """DIP: Real-time event bus for decoupled event emission to WebSocket and SSE handlers."""
-
-    @abstractmethod
-    async def publish(self, topic: str, event: Dict[str, Any]) -> None:
-        pass
-
-    @abstractmethod
-    async def subscribe(self, topic: str) -> AsyncGenerator[Dict[str, Any], None]:
-        pass
+    async def authenticate(self, request: Any) -> AuthenticatedUser:
+        """Authenticates a request and returns the authenticated user entity."""
+        ...

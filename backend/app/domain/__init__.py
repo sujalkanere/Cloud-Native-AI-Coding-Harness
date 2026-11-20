@@ -1,0 +1,78 @@
+"""Domain layer package for Cloud-Native AI Coding Harness."""
+
+from .errors import (
+    DomainError,
+    EntityNotFoundError,
+    FreshVerificationError,
+    HeadroomValidationError,
+    InvalidStateTransitionError,
+    PathTraversalError,
+    SSRFSecurityError,
+    TarbombError,
+)
+from .interfaces import (
+    IAuthProvider,
+    IExecutionTerminal,
+    IFileAccess,
+    ILLMProvider,
+    ILogStreamer,
+    IObjectStorage,
+    IRunRepository,
+    ISandboxEnvironment,
+    ISandboxProvider,
+)
+from .models import (
+    AuthenticatedUser,
+    ExecEvent,
+    FileDiff,
+    LLMMessage,
+    LLMResponse,
+    LogEvent,
+    Run,
+    RunEvent,
+    RunOptions,
+    RunStatus,
+    SandboxSpec,
+    ToolCall,
+    ToolDefinition,
+    User,
+    VerificationMode,
+)
+
+__all__ = [
+    "AuthenticatedUser",
+    # Errors
+    "DomainError",
+    "EntityNotFoundError",
+    "ExecEvent",
+    "FileDiff",
+    "FreshVerificationError",
+    "HeadroomValidationError",
+    "IAuthProvider",
+    # Interfaces
+    "IExecutionTerminal",
+    "IFileAccess",
+    "ILLMProvider",
+    "ILogStreamer",
+    "IObjectStorage",
+    "IRunRepository",
+    "ISandboxEnvironment",
+    "ISandboxProvider",
+    "InvalidStateTransitionError",
+    "LLMMessage",
+    "LLMResponse",
+    "LogEvent",
+    "PathTraversalError",
+    "Run",
+    "RunEvent",
+    "RunOptions",
+    # Models
+    "RunStatus",
+    "SSRFSecurityError",
+    "SandboxSpec",
+    "TarbombError",
+    "ToolCall",
+    "ToolDefinition",
+    "User",
+    "VerificationMode",
+]

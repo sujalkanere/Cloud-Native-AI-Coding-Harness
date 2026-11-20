@@ -1,140 +1,155 @@
 """
-Domain Models and Data Transfer Objects for Cloud-Native AI Coding Harness.
+Domain Models and Schemas for Cloud-Native AI Coding Harness.
+
+Fixed contracts adhering strictly to Spec §3.3, §3.4, and §3.5:
+- RunStatus: QUEUED, PREPARING, RUNNING, PAUSED, SUCCEEDED, FAILED, TERMINATED.
+- RunEvent: {seq, ts, type, payload} with monotonic gap-free sequence counter.
+- Per-user isolation entities and sandbox specifications.
 """
+
+from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class SessionStatus(str, Enum):
-    PENDING = "PENDING"
-    ANALYZING = "ANALYZING"
-    PLANNING = "PLANNING"
-    INSPECTING = "INSPECTING"
-    EDITING = "EDITING"
-    TESTING = "TESTING"
-    EVALUATING = "EVALUATING"
-    SELF_CORRECTING = "SELF_CORRECTING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
+class RunStatus(str, Enum):
+    """Valid lifecycle states adhering strictly to Spec §3.4."""
+    QUEUED = "QUEUED"
+    PREPARING = "PREPARING"
+    RUNNING = "RUNNING"
     PAUSED = "PAUSED"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
     TERMINATED = "TERMINATED"
 
 
-class AgentStepPhase(str, Enum):
-    CONTEXT_MAPPING = "CONTEXT_MAPPING"
-    PLANNING = "PLANNING"
-    FILE_INSPECTION = "FILE_INSPECTION"
-    FILE_EDIT = "FILE_EDIT"
-    COMMAND_EXEC = "COMMAND_EXEC"
-    TEST_EVALUATION = "TEST_EVALUATION"
-    SELF_CORRECTION = "SELF_CORRECTION"
-    FINAL_VERIFICATION = "FINAL_VERIFICATION"
+class VerificationMode(str, Enum):
+    """Run verification mode option from Spec §3.5 & §4."""
+    REQUIRED = "required"
+    NONE = "none"
 
 
-class ToolType(str, Enum):
-    READ_FILE = "read_file"
-    WRITE_FILE = "write_file"
-    LIST_FILES = "list_files"
-    EXECUTE_COMMAND = "execute_command"
-    GET_DIFF = "get_diff"
-    GENERATE_PATCH = "generate_patch"
+class RunOptions(BaseModel):
+    """Options submitted when creating a run."""
+    model_config = ConfigDict(extra="ignore")
+    verification: VerificationMode = VerificationMode.REQUIRED
 
 
-class CommandResult(BaseModel):
-    """Result of running a command inside an isolated sandbox."""
-    command: str
-    exit_code: int
-    stdout: str
-    stderr: str
-    duration_ms: float
-    timed_out: bool = False
+class AuthenticatedUser(BaseModel):
+    """Authenticated user entity scoped for per-user isolation (Spec §3.5, §8)."""
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    username: str | None = None
+    email: str | None = None
+
+
+User = AuthenticatedUser
+
+
+class Run(BaseModel):
+    """Core domain model representing an autonomous agent run."""
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    user_id: str
+    repo_url: str | None = None
+    task: str
+    status: RunStatus = RunStatus.QUEUED
+    options: RunOptions = Field(default_factory=RunOptions)
+    is_pausing: bool = False
+    baseline_sha: str | None = None
+    error_reason: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class RunEvent(BaseModel):
+    """
+    Monotonic persisted event schema adhering strictly to Spec §3.3:
+    {seq, ts, type, payload} with one persisted, gap-free, monotonic seq per run.
+    """
+    model_config = ConfigDict(extra="ignore")
+    seq: int
+    ts: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    type: str  # reasoning, plan, decision, tool_call, tool_result, terminal_output, status_change, guidance, truncation_marker
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExecEvent(BaseModel):
+    """Terminal execution event emitted during command runs (Spec §3.2, §3.3)."""
+    model_config = ConfigDict(extra="ignore")
+    stream: str = "stdout"  # "stdout" | "stderr" | "exit"
+    data: str = ""
+    exit_code: int | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class LogEvent(BaseModel):
+    """Telemetry log event streamed to subscribers (Spec §3.2)."""
+    model_config = ConfigDict(extra="ignore")
+    stream: str = "stdout"  # "stdout" | "stderr" | "system"
+    data: str = ""
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class SandboxSpec(BaseModel):
+    """Container resource limit and environment specification (Spec §3.6, §5)."""
+    model_config = ConfigDict(extra="ignore")
+    image: str = "harness-sandbox:latest"
+    cpu_limit: float = 1.0
+    mem_limit: str = "1g"
+    pids_limit: int = 256
+    workspace_size: str = "384m"
+    tmp_size: str = "128m"
+    network_mode: str = "none"
+    env: dict[str, str] = Field(default_factory=dict)
+
+
+class ToolDefinition(BaseModel):
+    """Tool schema definition for LLM function calling (Spec §4)."""
+    model_config = ConfigDict(extra="ignore")
+    name: str
+    description: str
+    parameters: dict[str, Any]
+
+
+class ToolCall(BaseModel):
+    """Tool call invocation generated by the LLM."""
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+class LLMMessage(BaseModel):
+    """Chat message in LLM conversation context."""
+    model_config = ConfigDict(extra="ignore")
+    role: str  # system, user, assistant, tool
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
+    tool_call_id: str | None = None
+
+
+class LLMResponse(BaseModel):
+    """Response returned by ILLMProvider.complete (Spec §3.2)."""
+    model_config = ConfigDict(extra="ignore")
+    content: str | None = None
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 class FileDiff(BaseModel):
-    """Represents a visual diff of a modified file."""
-    file_path: str
-    status: str = "modified"  # added, modified, deleted
+    """Per-file before/after diff for dashboard viewer (Spec §3.5, §4)."""
+    model_config = ConfigDict(extra="ignore")
+    path: str
+    status: str = "modified"  # modified, added, deleted, renamed, binary
     additions: int = 0
     deletions: int = 0
-    old_content: Optional[str] = None
-    new_content: Optional[str] = None
-    diff_patch: str
-
-
-class ToolCallDefinition(BaseModel):
-    """Represents a tool call initiated by the agent."""
-    tool_name: str
-    arguments: Dict[str, Any]
-    call_id: Optional[str] = None
-
-
-class ToolExecutionResult(BaseModel):
-    """Result after executing a tool call inside the environment."""
-    tool_name: str
-    arguments: Dict[str, Any]
-    success: bool
-    output: Any
-    error: Optional[str] = None
-    execution_time_ms: float = 0.0
-
-
-class AgentThoughtStep(BaseModel):
-    """Single step in the agent's thought chain, action, and feedback loop."""
-    step_number: int
-    phase: AgentStepPhase
-    thought: str
-    action_plan: List[str] = Field(default_factory=list)
-    tool_call: Optional[ToolCallDefinition] = None
-    tool_result: Optional[ToolExecutionResult] = None
-    reflection: Optional[str] = None
-    injected_guidance: Optional[str] = None
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
-class AgentSession(BaseModel):
-    """The complete autonomous agent session representation."""
-    id: str
-    title: str
-    task_description: str
-    repo_url_or_path: str
-    status: SessionStatus = SessionStatus.PENDING
-    sandbox_provider: str = "process"  # docker, process, e2b
-    llm_provider: str = "mock"  # openai, anthropic, gemini, mock
-    current_phase: AgentStepPhase = AgentStepPhase.CONTEXT_MAPPING
-    iteration_count: int = 0
-    max_iterations: int = 15
-    thoughts: List[AgentThoughtStep] = Field(default_factory=list)
-    active_diffs: List[FileDiff] = Field(default_factory=list)
-    patch_artifact_path: Optional[str] = None
-    guidance_queue: List[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    error_message: Optional[str] = None
-    test_runs_passed: bool = False
-
-
-# API Request / Response Schemas
-class SessionCreateRequest(BaseModel):
-    title: str
-    task_description: str
-    repo_url_or_path: Optional[str] = "./sample_repo"
-    sandbox_provider: Optional[str] = "process"  # "docker" or "process"
-    llm_provider: Optional[str] = "mock"  # "openai", "anthropic", "mock"
-    max_iterations: Optional[int] = 12
-
-
-class SessionGuidanceRequest(BaseModel):
-    guidance: str
-    resume_immediately: bool = True
-
-
-class SystemMetrics(BaseModel):
-    active_sandboxes: int
-    total_sessions: int
-    cpu_usage_pct: float
-    memory_usage_pct: float
-    sandbox_boot_avg_ms: float
+    old_content: str | None = None
+    new_content: str | None = None
+    diff_patch: str | None = None
