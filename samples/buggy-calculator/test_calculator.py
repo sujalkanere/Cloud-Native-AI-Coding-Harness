@@ -43,6 +43,11 @@ def test_power():
     assert power(2, -1) == 0.5
 
 
+def test_power_negative_fractional():
+    with pytest.raises(ValueError, match="Fractional powers of negative numbers are not supported"):
+        power(-2, 0.5)
+
+
 def test_factorial():
     assert factorial(0) == 1
     assert factorial(1) == 1

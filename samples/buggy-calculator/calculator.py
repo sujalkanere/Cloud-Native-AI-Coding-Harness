@@ -32,6 +32,8 @@ def divide(a: float | int, b: float | int) -> float:
 
 def power(base: float | int, exponent: float | int) -> float | int:
     """Return base raised to the given exponent."""
+    if base < 0 and isinstance(exponent, (int, float)) and exponent % 1 != 0:
+        raise ValueError("Fractional powers of negative numbers are not supported")
     return base ** exponent
 
 

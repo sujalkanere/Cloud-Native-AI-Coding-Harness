@@ -225,13 +225,16 @@ class SampleArchiveBuilder:
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             for root, dirs, files in os.walk(sample_dir):
                 # Filter out ignored directories in-place
-                dirs[:] = [d for d in dirs if d not in cls.IGNORED_NAMES and not d.endswith(".egg-info")]
+                dirs[:] = [d for d in dirs if not d.startswith(".") and d not in cls.IGNORED_NAMES and not d.endswith(".egg-info")]
 
                 for file in files:
-                    if file in cls.IGNORED_NAMES or file.endswith((".pyc", ".pyo")):
+                    if file.startswith(".") or file in cls.IGNORED_NAMES or file.endswith((".pyc", ".pyo", ".egg-info")):
                         continue
 
                     full_path = Path(root) / file
+                    if os.path.islink(full_path):
+                        continue
+
                     rel_path = full_path.relative_to(sample_dir)
                     # Enforce forward slashes inside tarball archive
                     arcname = rel_path.as_posix()
@@ -556,7 +559,7 @@ class IsolatedSandboxValidator:
                 temp_dir = Path(td)
                 # Copy sample repo contents
                 for item in sample_dir.iterdir():
-                    if item.name in (".git", "__pycache__", ".pytest_cache", "scripted_run.json"):
+                    if item.name.startswith(".") or item.name in (".git", "__pycache__", ".pytest_cache", "scripted_run.json") or item.name.endswith((".pyc", ".pyo", ".egg-info")) or item.is_symlink():
                         continue
                     if item.is_file():
                         shutil.copy2(item, temp_dir / item.name)
@@ -574,7 +577,7 @@ class IsolatedSandboxValidator:
                 # Write patch file with normalized LF endings
                 patch_file = temp_dir / "test_patch.diff"
                 normalized_patch = patch_str.replace("\r\n", "\n")
-                patch_file.write_text(normalized_patch, encoding="utf-8", newline="\n")
+                patch_file.write_bytes(normalized_patch.encode("utf-8"))
 
                 # Check if Docker daemon is available for isolated container check
                 docker_check = subprocess.run(["docker", "info"], capture_output=True, text=True, check=False)
@@ -625,7 +628,7 @@ class LocalPytestValidator:
         with tempfile.TemporaryDirectory() as td:
             temp_dir = Path(td)
             for item in sample_dir.iterdir():
-                if item.name in (".git", "__pycache__", ".pytest_cache", "scripted_run.json"):
+                if item.name.startswith(".") or item.name in (".git", "__pycache__", ".pytest_cache", "scripted_run.json") or item.name.endswith((".pyc", ".pyo", ".egg-info")) or item.is_symlink():
                     continue
                 if item.is_file():
                     shutil.copy2(item, temp_dir / item.name)
@@ -642,12 +645,23 @@ class LocalPytestValidator:
                 subprocess.run(["git", "commit", "-m", "baseline"], cwd=temp_dir, capture_output=True, check=True)
 
                 normalized_patch = patch_str.replace("\r\n", "\n")
-                apply_res = subprocess.run(
-                    ["git", "apply"],
-                    input=normalized_patch,
-                    text=True,
+                (temp_dir / "test_patch.diff").write_bytes(normalized_patch.encode("utf-8"))
+
+                check_res = subprocess.run(
+                    ["git", "apply", "--check", "test_patch.diff"],
                     cwd=temp_dir,
                     capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if check_res.returncode != 0:
+                    return False, f"git apply --check failed:\n{check_res.stderr}\nPatch content:\n{normalized_patch}"
+
+                apply_res = subprocess.run(
+                    ["git", "apply", "test_patch.diff"],
+                    cwd=temp_dir,
+                    capture_output=True,
+                    text=True,
                     check=False,
                 )
                 if apply_res.returncode != 0:
