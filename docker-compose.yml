@@ -1,0 +1,146 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: prod
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - HARNESS_ENV=development
+      - AUTH_PROVIDER=dev
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/harness
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_PUBLIC_ENDPOINT_URL=http://127.0.0.1:9000
+      - S3_BUCKET=harness-artifacts
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin
+      - S3_REGION=us-east-1
+      - DOCKER_HOST=tcp://docker-proxy:2375
+      - SANDBOX_IMAGE=harness-sandbox:latest
+      - SANDBOX_NETWORK_MODE=none
+      - SANDBOX_CPU_LIMIT=1.0
+      - SANDBOX_MEM_LIMIT=1g
+      - SANDBOX_PIDS_LIMIT=256
+      - SANDBOX_WARM_POOL_SIZE=2
+      - SANDBOX_WORKSPACE_SIZE=384m
+      - SANDBOX_TMP_SIZE=128m
+      - MAX_CONCURRENT_RUNS=4
+      - AGENT_MAX_STEPS=40
+      - AGENT_MAX_TOKENS=200000
+      - AGENT_MAX_CONSECUTIVE_FAILURES=5
+      - COMMAND_TIMEOUT_SECONDS=120
+      - MAX_UPLOAD_MB=50
+      - MAX_OUTPUT_BYTES_PER_RUN=5242880
+      - CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173
+      - LLM_PROVIDER=${LLM_PROVIDER:-}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      create-bucket:
+        condition: service_completed_successfully
+      docker-proxy:
+        condition: service_healthy
+      sandbox-image:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=harness
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d harness"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:RELEASE.2024-11-07T00-52-28Z
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  create-bucket:
+    image: minio/mc:RELEASE.2024-11-05T11-41-28Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "/usr/bin/mc alias set local http://minio:9000 minioadmin minioadmin && /usr/bin/mc mb --ignore-existing local/harness-artifacts && /usr/bin/mc anonymous set download local/harness-artifacts || true"
+    restart: "no"
+
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.1.2
+    ports:
+      - "127.0.0.1:2375:2375"
+    environment:
+      - CONTAINERS=1
+      - EXEC=1
+      - IMAGES=1
+      - INFO=1
+      - POST=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:2375/_ping | grep -q OK || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  sandbox-image:
+    build:
+      context: ./sandbox
+      dockerfile: Dockerfile
+    image: harness-sandbox:latest
+    entrypoint: ["echo", "Sandbox image built successfully"]
+    restart: "no"
+
+volumes:
+  postgres_data:
+  minio_data:
