@@ -551,7 +551,6 @@ class IsolatedSandboxValidator:
             print("[E2E] Isolated Patch Validation Failed: Patch string is empty.", file=sys.stderr)
             return False
 
-        # Attempt isolated Docker container validation if docker daemon is reachable
         try:
             with tempfile.TemporaryDirectory() as td:
                 temp_dir = Path(td)
@@ -564,8 +563,9 @@ class IsolatedSandboxValidator:
                     elif item.is_dir():
                         shutil.copytree(item, temp_dir / item.name)
 
-                # Initialize git repo in temp_dir
+                # Initialize git repo in temp_dir with core.autocrlf false
                 subprocess.run(["git", "init"], cwd=temp_dir, capture_output=True, check=True)
+                subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=temp_dir, capture_output=True, check=True)
                 subprocess.run(["git", "config", "user.name", "Test"], cwd=temp_dir, capture_output=True, check=True)
                 subprocess.run(["git", "config", "user.email", "test@local"], cwd=temp_dir, capture_output=True, check=True)
                 subprocess.run(["git", "add", "."], cwd=temp_dir, capture_output=True, check=True)
@@ -632,9 +632,10 @@ class LocalPytestValidator:
                 elif item.is_dir():
                     shutil.copytree(item, temp_dir / item.name)
 
-            # Initialize git repo to allow git apply
+            # Initialize git repo to allow git apply with autocrlf false
             try:
                 subprocess.run(["git", "init"], cwd=temp_dir, capture_output=True, check=True)
+                subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=temp_dir, capture_output=True, check=True)
                 subprocess.run(["git", "config", "user.name", "Test"], cwd=temp_dir, capture_output=True, check=True)
                 subprocess.run(["git", "config", "user.email", "test@local"], cwd=temp_dir, capture_output=True, check=True)
                 subprocess.run(["git", "add", "."], cwd=temp_dir, capture_output=True, check=True)
