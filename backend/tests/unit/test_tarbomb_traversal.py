@@ -20,7 +20,6 @@ import tarfile
 from pathlib import Path
 
 import pytest
-
 from backend.app.application.archive import create_archive, extract_archive
 from backend.app.domain.errors import TarbombError
 

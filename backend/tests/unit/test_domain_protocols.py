@@ -13,7 +13,6 @@ from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 import pytest
-
 from backend.app.domain.interfaces import (
     IAuthProvider,
     IExecutionTerminal,

@@ -13,7 +13,6 @@ Adheres strictly to Spec §3.4:
 from __future__ import annotations
 
 import pytest
-
 from backend.app.application.state_machine import RunStateMachine
 from backend.app.domain.errors import InvalidStateTransitionError
 from backend.app.domain.models import Run, RunStatus

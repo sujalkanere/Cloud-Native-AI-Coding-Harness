@@ -1,6 +1,7 @@
 """Domain layer package for Cloud-Native AI Coding Harness."""
 
 from .errors import (
+    AuthenticationError,
     DomainError,
     EntityNotFoundError,
     FreshVerificationError,
@@ -42,6 +43,7 @@ from .models import (
 __all__ = [
     "AuthenticatedUser",
     # Errors
+    "AuthenticationError",
     "DomainError",
     "EntityNotFoundError",
     "ExecEvent",

@@ -17,7 +17,6 @@ import socket
 from unittest.mock import patch
 
 import pytest
-
 from backend.app.application.ssrf import validate_repo_url
 from backend.app.domain.errors import SSRFSecurityError
 

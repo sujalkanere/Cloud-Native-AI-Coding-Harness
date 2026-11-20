@@ -37,3 +37,8 @@ class InvalidStateTransitionError(DomainError):
 
 class EntityNotFoundError(DomainError):
     """Raised when a run or resource is not found or owned by another user (maps to HTTP 404)."""
+
+
+class AuthenticationError(DomainError):
+    """Raised when authentication fails (maps to HTTP 401)."""
+

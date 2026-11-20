@@ -15,7 +15,6 @@ Adheres strictly to Spec §3.6:
 from __future__ import annotations
 
 import pytest
-
 from backend.app.application.provider_selection import (
     DEFAULT_MODELS,
     resolve_llm_provider,

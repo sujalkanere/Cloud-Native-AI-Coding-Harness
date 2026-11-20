@@ -14,7 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from backend.app.application.headroom import (
     parse_size_bytes,
     validate_tmpfs_headroom,
