@@ -9,7 +9,7 @@ Fixed contracts adhering strictly to Spec §3.3, §3.4, and §3.5:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -62,8 +62,8 @@ class Run(BaseModel):
     is_pausing: bool = False
     baseline_sha: str | None = None
     error_reason: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class RunEvent(BaseModel):
@@ -73,7 +73,7 @@ class RunEvent(BaseModel):
     """
     model_config = ConfigDict(extra="ignore")
     seq: int
-    ts: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    ts: datetime = Field(default_factory=lambda: datetime.now(UTC))
     type: str  # reasoning, plan, decision, tool_call, tool_result, terminal_output, status_change, guidance, truncation_marker
     payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -84,7 +84,7 @@ class ExecEvent(BaseModel):
     stream: str = "stdout"  # "stdout" | "stderr" | "exit"
     data: str = ""
     exit_code: int | None = None
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class LogEvent(BaseModel):
@@ -92,7 +92,7 @@ class LogEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
     stream: str = "stdout"  # "stdout" | "stderr" | "system"
     data: str = ""
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class SandboxSpec(BaseModel):
