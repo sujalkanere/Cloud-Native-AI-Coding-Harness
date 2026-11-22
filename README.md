@@ -30,6 +30,15 @@ An autonomous, full-stack AI coding harness running in isolated, ephemeral Docke
    - REST API: [http://127.0.0.1:8000](http://127.0.0.1:8000)
    - MinIO Console: [http://127.0.0.1:9001](http://127.0.0.1:9001)
 
+### Compose Profiles & Environment Modes
+The harness supports three distinct environment modes (`HARNESS_ENV`):
+
+| Environment Mode | Target / Compose Configuration | Auth Provider | LLM Provider | Sandboxes & Security |
+|---|---|---|---|---|
+| **`development`** (default) | `docker compose up --build` | `dev` (no login required, default user `dev_user`) | Real LLM (`anthropic` or `openai` via API key) | Isolated Docker sandboxes (`network=none`, non-root, cap-drop, tmpfs exec, read-only root) |
+| **`test`** | `docker compose -f docker-compose.yml -f docker-compose.test.yml up --build -d` | `dev` or test mock tokens | `scripted` (replays `samples/buggy-calculator/scripted_run.json` without API keys) | Extends backend with test support tools; enables deterministic automated E2E verification |
+| **`production`** | `docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build` | `clerk` (strictly requires valid Clerk JWT with JWKS verification; refuses `dev` auth) | Real LLM (`anthropic` or `openai`); strictly refuses `scripted` provider | Production image excludes test tools; enforces strict TLS, automated secret redaction, and host cgroup OOM defense |
+
 ---
 
 ## 2. Architecture & Design Principles
@@ -98,6 +107,31 @@ The harness architecture (in-memory state synchronization, serialized monotonic 
 - `IObjectStorage`: `put(key, data)`, `get(key)`, `presigned_url(key, ttl)`
 - `IRunRepository`: `create`, `get`, `list`, `update_status`, `append_event`, `list_events`
 - `IAuthProvider`: `authenticate(request) -> User`
+
+### Domain Data Models (Pydantic v2 schemas in `backend/app/domain/models.py`)
+- **`Run`**: Core domain entity representing an autonomous coding agent execution:
+  `{id: str, user_id: str, repo_url: str | None, task: str, status: RunStatus, options: RunOptions, is_pausing: bool, baseline_sha: str | None, error_reason: str | None, created_at: datetime, updated_at: datetime}`
+- **`RunEvent`**: Monotonic persisted event schema adhering strictly to Spec §3.3:
+  `{seq: int, ts: datetime, type: str, payload: dict[str, Any]}`
+  (Supported event types: `reasoning`, `plan`, `decision`, `tool_call`, `tool_result`, `terminal_output`, `status_change`, `guidance`, `truncation_marker`, `token_usage`, `sandbox_boot`)
+- **`ExecEvent`**: Real-time terminal execution event emitted during command runs:
+  `{stream: "stdout" | "stderr" | "exit", data: str, exit_code: int | None, timestamp: datetime}`
+- **`LogEvent`**: Telemetry log entry streamed from sandbox container:
+  `{stream: "stdout" | "stderr" | "system", data: str, timestamp: datetime}`
+- **`SandboxSpec`**: Ephemeral container resource limits and runtime specifications:
+  `{image: str, cpu_limit: float, mem_limit: str, pids_limit: int, workspace_size: str, tmp_size: str, network_mode: str, env: dict[str, str]}`
+- **`AuthenticatedUser`** (`User`): Authenticated user entity scoped for strict multi-user isolation:
+  `{id: str, username: str | None, email: str | None}`
+- **`FileDiff`**: Per-file before/after diff for dashboard viewer:
+  `{path: str, status: "modified" | "added" | "deleted" | "renamed" | "binary", additions: int, deletions: int, old_content: str | None, new_content: str | None, diff_patch: str | None}`
+- **`ToolDefinition`**: Function-calling schema definition for the LLM:
+  `{name: str, description: str, parameters: dict[str, Any]}`
+- **`ToolCall`**: Specific tool invocation requested by the LLM:
+  `{id: str, name: str, arguments: dict[str, Any]}`
+- **`LLMResponse`**: Standardized completion output returned by `ILLMProvider.complete`:
+  `{content: str | None, tool_calls: list[ToolCall], prompt_tokens: int, completion_tokens: int, total_tokens: int}`
+- **`RunOptions`**: User-configurable run submission parameters:
+  `{verification: VerificationMode ("required" | "none")}`
 
 ### Lifecycle States
 `QUEUED` → `PREPARING` → `RUNNING` → `PAUSED` → `SUCCEEDED` / `FAILED` / `TERMINATED`

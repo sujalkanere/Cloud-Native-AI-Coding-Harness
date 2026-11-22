@@ -59,6 +59,9 @@ COPY alembic.ini* ./
 COPY alembic/ ./alembic/
 COPY app/ ./app/
 
+# Symlink /app to /app/backend so absolute 'from backend...' imports resolve in containers
+RUN ln -s /app /app/backend
+
 # Set ownership
 RUN chown -R 1000:1000 /app
 
@@ -83,6 +86,8 @@ RUN /app/.venv/bin/pip install \
 # Copy test support and test suites
 COPY test_support/ ./test_support/
 COPY tests/ ./tests/
+
+RUN ln -s /app /app/backend 2>/dev/null || true
 
 RUN chown -R 1000:1000 /app
 

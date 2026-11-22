@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { eventReducer, initialRunState } from "../src/state/eventReducer";
-import type { RunEvent } from "../src/types/run";
+import { eventReducer, initialRunState } from "../state/eventReducer";
+import type { RunEvent } from "../types/run";
 
 describe("Adversarial eventReducer Stress Tests", () => {
   // Helper to generate events

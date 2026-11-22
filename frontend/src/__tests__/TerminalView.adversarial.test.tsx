@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { TerminalView } from "../src/components/run/TerminalView";
-import type { TerminalChunk } from "../src/types/run";
+import { TerminalView } from "../components/run/TerminalView";
+import type { TerminalChunk } from "../types/run";
 import { Terminal as XTerm } from "@xterm/xterm";
 
 const makeMatchMedia = () =>

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cloud-native-ai-coding-harness"
+version = "0.1.0"
+description = "Cloud-Native AI Coding Harness"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = [".", "backend"]
+markers = [
+    "docker: marks tests as requiring Docker daemon (deselect with '-m \"not docker\"')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [
+    ".git",
+    ".agents",
+    "samples",
+    "frontend",
+    ".venv",
+    "venv",
+    "__pycache__",
+]
+
+[tool.ruff.lint]
+ignore = [
+    "B008",    # do not perform function calls in argument defaults (FastAPI Depends)
+    "BLE001",  # blind exception in scripts
+]

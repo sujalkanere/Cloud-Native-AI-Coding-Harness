@@ -21,6 +21,7 @@ The Cloud-Native AI Coding Harness is designed to execute untrusted code submitt
 - **Least Privilege (Non-Root)**: The sandbox executes exclusively as an unprivileged user (UID 1000, GID 1000).
 - **Capability Dropping**: All Linux capabilities are dropped (`--cap-drop ALL`), and `no-new-privileges:true` is enforced.
 - **Tmpfs Mounts with Strict Options**: Writable areas `/workspace` and `/tmp` are tmpfs mounts configured with `exec,nosuid,nodev`.
+- **Tmpfs Memory Headroom as Host Cgroup OOM Defense**: Total tmpfs memory (`SANDBOX_WORKSPACE_SIZE` + `SANDBOX_TMP_SIZE`) must not exceed 60% of `SANDBOX_MEM_LIMIT`. Shipped defaults (`384m` workspace + `128m` tmp = `512m` = 50% of `1g` container limit) guarantee a minimum 40% headroom buffer. This headroom prevents host Linux kernel cgroup OOM kills caused by rapid tmpfs growth and runtime execution spikes. The backend enforces this check at startup, failing fast with a typed `HeadroomValidationError` naming the offending variables if the ratio is violated.
 
 ### 2.2 Docker Daemon Proxy
 - The backend application does **not** mount `/var/run/docker.sock`.
@@ -49,6 +50,10 @@ The Cloud-Native AI Coding Harness is designed to execute untrusted code submitt
 - The frontend reverse proxy masks or excludes query parameter `token` from nginx access logs.
 - Compose port bindings are restricted to `127.0.0.1`.
 - Production mode (`HARNESS_ENV=production`) strictly refuses `AUTH_PROVIDER=dev` and `LLM_PROVIDER=scripted`.
+
+### 2.8 Automated Secret Redaction Across Telemetry and Events
+- All emitted events, reasoning text, tool arguments, tool outputs, terminal chunks, guidance messages, and persisted event logs are processed in flight through an automated redaction engine (`backend/app/application/redaction.py`).
+- High-entropy API credentials (e.g. Anthropic keys `sk-ant-*`, OpenAI keys `sk-*`, AWS credentials `AKIA*`, Bearer tokens, and generic authorization headers) are automatically scrubbed and replaced with `[REDACTED]` prior to persistence in PostgreSQL, S3 transcript upload, or broadcasting to WebSocket clients.
 
 ---
 

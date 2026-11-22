@@ -28,7 +28,6 @@ import io
 import json
 import logging
 import os
-import re
 import shutil
 import signal
 import subprocess
@@ -36,9 +35,9 @@ import sys
 import tarfile
 import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
+from typing import Any, ClassVar
 
 # Third-party dependencies
 try:
@@ -81,7 +80,7 @@ class EventRecord:
     seq: int
     ts: float | str
     type: str
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
 
 
 @dataclass
@@ -89,13 +88,16 @@ class RunSummary:
     """Summary of a completed or observed run."""
     run_id: str
     final_status: str
-    boot_ms: Optional[int]
-    events: List[EventRecord]
-    patch_content: Optional[str]
-    diff_data: Optional[Dict[str, Any]]
-    error_reason: Optional[str] = None
-    provider: Optional[str] = None
-    model: Optional[str] = None
+    boot_ms: int | None
+    events: list[EventRecord]
+    patch_content: str | None
+    diff_data: dict[str, Any] | list[Any] | None
+    error_reason: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 # ============================================================================
@@ -164,7 +166,7 @@ class DockerStackManager:
             time.sleep(delay)
             print(".", end="", flush=True)
 
-        print("", flush=True)
+        print(flush=True)
         # Dump diagnostic information
         print(f"[E2E] ERROR: Timeout waiting for {ready_url}", file=sys.stderr)
         self.dump_compose_logs()
@@ -204,7 +206,7 @@ class DockerStackManager:
 class SampleArchiveBuilder:
     """Archives the sample repository into an in-memory tarball."""
 
-    IGNORED_NAMES = {
+    IGNORED_NAMES: ClassVar[set[str]] = {
         "__pycache__",
         ".pytest_cache",
         ".git",
@@ -289,7 +291,7 @@ class HarnessApiClient:
                 raise ValueError(f"Run ID missing from create response: {payload}")
             return str(run_id)
 
-    def get_run(self, run_id: str) -> Dict[str, Any]:
+    def get_run(self, run_id: str) -> dict[str, Any]:
         """Fetches GET /api/runs/{id}."""
         url = f"{self.base_url}/api/runs/{run_id}"
         with httpx.Client(timeout=10.0) as client:
@@ -298,7 +300,7 @@ class HarnessApiClient:
                 raise RuntimeError(f"GET /api/runs/{run_id} failed ({res.status_code}): {res.text}")
             return res.json()
 
-    def get_events(self, run_id: str, after_seq: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_events(self, run_id: str, after_seq: int | None = None) -> list[dict[str, Any]]:
         """Fetches GET /api/runs/{id}/events?after=seq."""
         url = f"{self.base_url}/api/runs/{run_id}/events"
         params = {}
@@ -311,7 +313,7 @@ class HarnessApiClient:
             data = res.json()
             return data if isinstance(data, list) else data.get("events", [])
 
-    def get_artifacts(self, run_id: str) -> Dict[str, Any]:
+    def get_artifacts(self, run_id: str) -> dict[str, Any]:
         """Fetches GET /api/runs/{id}/artifacts."""
         url = f"{self.base_url}/api/runs/{run_id}/artifacts"
         with httpx.Client(timeout=10.0) as client:
@@ -320,7 +322,7 @@ class HarnessApiClient:
                 return res.json()
             return {}
 
-    def get_diff(self, run_id: str) -> Optional[Dict[str, Any]]:
+    def get_diff(self, run_id: str) -> dict[str, Any] | None:
         """Fetches GET /api/runs/{id}/diff."""
         url = f"{self.base_url}/api/runs/{run_id}/diff"
         with httpx.Client(timeout=10.0) as client:
@@ -329,18 +331,21 @@ class HarnessApiClient:
                 return res.json()
             return None
 
-    def fetch_patch_content(self, run_id: str, artifacts: Dict[str, Any]) -> Optional[str]:
+    def fetch_patch_content(self, run_id: str, artifacts: dict[str, Any]) -> str | None:
         """Retrieves the git patch content either from presigned URL or diff endpoint."""
         patch_val = artifacts.get("patch") or artifacts.get("patch_url") or artifacts.get("patch_content")
         if patch_val and isinstance(patch_val, str):
-            if patch_val.startswith("http://") or patch_val.startswith("https://"):
-                try:
-                    with httpx.Client(timeout=10.0) as client:
-                        resp = client.get(patch_val)
-                        if resp.status_code == 200:
-                            return resp.text
-                except Exception as e:
-                    print(f"[E2E] Warning: Could not download patch from presigned URL: {e}", file=sys.stderr)
+            if patch_val.startswith(("http://", "https://")):
+                retry_deadline = time.time() + 5.0
+                while time.time() < retry_deadline:
+                    try:
+                        with httpx.Client(timeout=5.0) as client:
+                            resp = client.get(patch_val)
+                            if resp.status_code == 200 and resp.text:
+                                return resp.text
+                    except (httpx.HTTPError, OSError) as e:
+                        print(f"[E2E] Warning: Could not download patch from presigned URL: {e}", file=sys.stderr)
+                    time.sleep(0.5)
             else:
                 # Direct patch diff text
                 return patch_val
@@ -354,6 +359,19 @@ class HarnessApiClient:
                 raw_diff = diff_data.get("diff") or diff_data.get("raw") or diff_data.get("patch")
                 if raw_diff and isinstance(raw_diff, str):
                     return raw_diff
+            if isinstance(diff_data, list):
+                patches: list[str] = []
+                for item in diff_data:
+                    if isinstance(item, dict):
+                        p = item.get("diff_patch") or item.get("patch") or item.get("diff")
+                        if p and isinstance(p, str):
+                            patches.append(p)
+                    elif hasattr(item, "diff_patch"):
+                        p = item.diff_patch
+                        if p and isinstance(p, str):
+                            patches.append(p)
+                if patches:
+                    return "\n".join(patches)
 
         return None
 
@@ -366,12 +384,12 @@ class HarnessApiClient:
         """Streams events via WebSocket with reconnect and polling fallback."""
         start_time = time.time()
         last_seq = -1
-        collected_events: List[EventRecord] = []
-        terminal_status: Optional[str] = None
-        boot_ms: Optional[int] = None
-        provider: Optional[str] = None
-        model: Optional[str] = None
-        error_reason: Optional[str] = None
+        collected_events: list[EventRecord] = []
+        terminal_status: str | None = None
+        boot_ms: int | None = None
+        provider: str | None = None
+        model: str | None = None
+        error_reason: str | None = None
 
         # Build ws url
         ws_base = self.base_url.replace("http://", "ws://").replace("https://", "wss://")
@@ -395,7 +413,7 @@ class HarnessApiClient:
                     while time.time() - start_time < timeout:
                         try:
                             msg = await asyncio.wait_for(ws.recv(), timeout=2.0)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             # Periodic liveness check
                             run_info = self.get_run(run_id)
                             current_status = run_info.get("status")
@@ -471,6 +489,16 @@ class HarnessApiClient:
             provider = run_info.get("llm_provider")
             model = run_info.get("llm_model")
 
+        # Collect token metrics from events
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+        for ev in collected_events:
+            if ev.type == "token_usage" or "prompt_tokens" in ev.payload or "total_tokens" in ev.payload:
+                prompt_tokens += int(ev.payload.get("prompt_tokens", 0))
+                completion_tokens += int(ev.payload.get("completion_tokens", 0))
+                total_tokens += int(ev.payload.get("total_tokens", 0))
+
         # Fetch artifacts and diff
         artifacts = self.get_artifacts(run_id)
         patch_str = self.fetch_patch_content(run_id, artifacts)
@@ -486,9 +514,12 @@ class HarnessApiClient:
             error_reason=error_reason,
             provider=provider,
             model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
         )
 
-    def _process_event(self, event_json: Dict[str, Any], verbose: bool) -> EventRecord:
+    def _process_event(self, event_json: dict[str, Any], verbose: bool) -> EventRecord:
         """Normalizes and prints event logs."""
         seq = event_json.get("seq", 0)
         ts = event_json.get("ts", 0)
@@ -589,7 +620,7 @@ class IsolatedSandboxValidator:
                         "-v", f"{temp_dir.resolve()}:/workspace",
                         "-w", "/workspace",
                         image_name,
-                        "git", "apply", "--check", "test_patch.diff",
+                        "git", "-c", "safe.directory=*", "apply", "--check", "test_patch.diff",
                     ]
                     run_res = subprocess.run(cmd, capture_output=True, text=True, check=False)
                     if run_res.returncode == 0:
@@ -601,7 +632,7 @@ class IsolatedSandboxValidator:
                 else:
                     # Fallback to local git apply --check
                     local_check = subprocess.run(
-                        ["git", "apply", "--check", "test_patch.diff"],
+                        ["git", "-c", "safe.directory=*", "apply", "--check", "test_patch.diff"],
                         cwd=temp_dir,
                         capture_output=True,
                         text=True,
@@ -623,7 +654,7 @@ class LocalPytestValidator:
     """Applies patch to a clean copy of the sample repo and verifies 100% pytest pass."""
 
     @classmethod
-    def apply_and_test(cls, patch_str: str, sample_dir: Path) -> Tuple[bool, str]:
+    def apply_and_test(cls, patch_str: str, sample_dir: Path) -> tuple[bool, str]:
         """Applies patch to clean sample directory and runs pytest."""
         with tempfile.TemporaryDirectory() as td:
             temp_dir = Path(td)
@@ -648,7 +679,7 @@ class LocalPytestValidator:
                 (temp_dir / "test_patch.diff").write_bytes(normalized_patch.encode("utf-8"))
 
                 check_res = subprocess.run(
-                    ["git", "apply", "--check", "test_patch.diff"],
+                    ["git", "-c", "safe.directory=*", "apply", "--check", "test_patch.diff"],
                     cwd=temp_dir,
                     capture_output=True,
                     text=True,
@@ -658,7 +689,7 @@ class LocalPytestValidator:
                     return False, f"git apply --check failed:\n{check_res.stderr}\nPatch content:\n{normalized_patch}"
 
                 apply_res = subprocess.run(
-                    ["git", "apply", "test_patch.diff"],
+                    ["git", "-c", "safe.directory=*", "apply", "test_patch.diff"],
                     cwd=temp_dir,
                     capture_output=True,
                     text=True,
@@ -700,14 +731,17 @@ class E2EAttemptRecorder:
         provider: str,
         model: str,
         duration: float,
-        boot_ms: Optional[int],
+        boot_ms: int | None,
         patch_valid: bool,
         tests_pass: bool,
         status: str,
-        failure_details: Optional[str] = None,
+        failure_details: str | None = None,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        total_tokens: int = 0,
     ) -> None:
         """Appends an attempt row to docs/e2e-attempts.md."""
-        now_utc = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_utc = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         patch_str = "PASS" if patch_valid else "FAIL"
         tests_str = "PASS" if tests_pass else "FAIL"
         boot_str = str(boot_ms) if boot_ms is not None else "N/A"
@@ -715,7 +749,8 @@ class E2EAttemptRecorder:
 
         row = (
             f"| {attempt} | {now_utc} | {mode} | {provider} | {model} | "
-            f"{duration:.1f} | {boot_str} | {patch_str} | {tests_str} | {status} | {fail_str} |\n"
+            f"{duration:.1f} | {boot_str} | {prompt_tokens} | {completion_tokens} | {total_tokens} | "
+            f"{patch_str} | {tests_str} | {status} | {fail_str} |\n"
         )
 
         try:
@@ -726,14 +761,14 @@ class E2EAttemptRecorder:
                     "This document records the execution history of End-to-End (E2E) testing attempts "
                     "for the Cloud-Native AI Coding Harness across both real-LLM and scripted replay modes.\n\n"
                     "## Real-LLM and Scripted Attempt History\n\n"
-                    "| Attempt # | Timestamp (UTC) | Mode | Provider | Model | Duration (s) | Boot (ms) | Patch Valid | Tests Pass | Status | Failure Details |\n"
-                    "|---|---|---|---|---|---|---|---|---|---|---|\n"
+                    "| Attempt # | Timestamp (UTC) | Mode | Provider | Model | Duration (s) | Boot (ms) | Prompt Tokens | Completion Tokens | Total Tokens | Patch Valid | Tests Pass | Status | Failure Details |\n"
+                    "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
                 )
                 log_path.write_text(header + row, encoding="utf-8")
             else:
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(row)
-        except Exception as e:
+        except OSError as e:
             print(f"[E2E] Warning: Could not write to attempt log {log_path}: {e}", file=sys.stderr)
 
 
@@ -741,7 +776,7 @@ class E2EAttemptRecorder:
 # Assertion Suite (The 7 Pass/Fail Acceptance Criteria)
 # ============================================================================
 
-def evaluate_criteria(summary: RunSummary, config: E2EConfig) -> Tuple[bool, bool]:
+def evaluate_criteria(summary: RunSummary, config: E2EConfig) -> tuple[bool, bool]:
     """
     Evaluates the 7 Pass/Fail criteria from Spec §9.1 and §11:
     Returns (patch_valid, tests_pass).
@@ -926,6 +961,9 @@ def run_e2e(config: E2EConfig) -> int:
                     model=model,
                     duration=duration,
                     boot_ms=summary.boot_ms,
+                    prompt_tokens=summary.prompt_tokens,
+                    completion_tokens=summary.completion_tokens,
+                    total_tokens=summary.total_tokens,
                     patch_valid=patch_valid,
                     tests_pass=tests_pass,
                     status=summary.final_status,
@@ -949,6 +987,9 @@ def run_e2e(config: E2EConfig) -> int:
                     model="scripted" if config.scripted else "unknown",
                     duration=duration,
                     boot_ms=None,
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
                     patch_valid=patch_valid,
                     tests_pass=tests_pass,
                     status="FAILED",
@@ -971,8 +1012,8 @@ def run_e2e(config: E2EConfig) -> int:
     except TimeoutError as te:
         print(f"\n[E2E] INFRASTRUCTURE TIMEOUT: {te}", file=sys.stderr)
         return 2
-    except RuntimeError as re:
-        print(f"\n[E2E] INFRASTRUCTURE ERROR: {re}", file=sys.stderr)
+    except RuntimeError as r_err:
+        print(f"\n[E2E] INFRASTRUCTURE ERROR: {r_err}", file=sys.stderr)
         return 2
     except AssertionError as ae:
         print(f"\n[E2E] CRITERIA ASSERTION FAILED: {ae}", file=sys.stderr)
@@ -989,7 +1030,7 @@ def run_e2e(config: E2EConfig) -> int:
 # CLI Entrypoint
 # ============================================================================
 
-def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parses command-line arguments."""
     parser = argparse.ArgumentParser(
         prog="scripts/e2e.py",

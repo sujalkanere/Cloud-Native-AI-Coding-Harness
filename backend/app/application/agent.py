@@ -396,6 +396,20 @@ class AgentRunner:
         verif_result = self.tracker.evaluate_finish()
 
         if verif_result.is_valid:
+            # Pre-compute diff and store patch artifact before emitting SUCCEEDED event
+            if self.run.baseline_sha:
+                try:
+                    patch_bytes = await compute_diff(self.sandbox, self.run.baseline_sha)
+                    if patch_bytes:
+                        await store_patch_artifact(
+                            self.storage,
+                            self.run.user_id,
+                            self.run.id,
+                            patch_bytes,
+                        )
+                except (OSError, RuntimeError, ValueError, KeyError, AttributeError) as exc:
+                    logger.warning("Failed to extract or store patch diff in finish: %s", exc)
+
             self.state_machine.transition_to(RunStatus.SUCCEEDED)
             await self.repository.update_status(self.run.id, status=RunStatus.SUCCEEDED)
             await self.repository.append_event(
@@ -565,7 +579,30 @@ class AgentRunner:
                 if response.content:
                     await self.repository.append_event(
                         self.run.id,
-                        {"type": "reasoning", "payload": {"thought": response.content}},
+                        {
+                            "type": "reasoning",
+                            "payload": {
+                                "thought": response.content,
+                                "prompt_tokens": response.prompt_tokens,
+                                "completion_tokens": response.completion_tokens,
+                                "total_tokens": response.total_tokens,
+                            },
+                        },
+                    )
+
+                # Record token usage event if tokens were consumed
+                if response.total_tokens > 0 or response.prompt_tokens > 0 or response.completion_tokens > 0:
+                    await self.repository.append_event(
+                        self.run.id,
+                        {
+                            "type": "token_usage",
+                            "payload": {
+                                "prompt_tokens": response.prompt_tokens,
+                                "completion_tokens": response.completion_tokens,
+                                "total_tokens": response.total_tokens,
+                                "cumulative_total_tokens": self.total_tokens,
+                            },
+                        },
                     )
 
                 # Check if paused now while LLM was in-flight (Spec §4: halt before tools)

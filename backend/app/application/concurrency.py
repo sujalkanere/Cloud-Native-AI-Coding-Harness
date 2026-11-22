@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -41,6 +42,7 @@ class ActiveRunHandle:
     state_machine: RunStateMachine
     task: asyncio.Task[Any] | None = None
     coalescer: TerminalCoalescer | None = None
+    boot_ms: int | None = None
     subscribers: set[asyncio.Queue[RunEvent]] = field(default_factory=set)
 
 
@@ -156,6 +158,7 @@ class RunConcurrencyManager:
         sandbox = None
         try:
             # 1. Acquire sandbox environment
+            t_boot_start = time.perf_counter()
             spec = SandboxSpec(
                 image=self.settings.SANDBOX_IMAGE,
                 cpu_limit=self.settings.SANDBOX_CPU_LIMIT,
@@ -166,7 +169,22 @@ class RunConcurrencyManager:
                 network_mode=self.settings.SANDBOX_NETWORK_MODE,
             )
             sandbox = await self.sandbox_provider.acquire(spec)
+            boot_ms = max(1, int((time.perf_counter() - t_boot_start) * 1000))
             handle.control.attach_sandbox(sandbox)
+            handle.boot_ms = boot_ms
+
+            # Emit sandbox_boot event so boot_ms is recorded per Spec §5 and Criterion 1
+            await self.publish_event(
+                run.id,
+                {
+                    "type": "sandbox_boot",
+                    "payload": {
+                        "boot_ms": boot_ms,
+                        "status": "ready",
+                        "sandbox_id": getattr(sandbox, "id", None),
+                    },
+                },
+            )
 
             # 2. Upload archive if provided
             if archive_bytes:
