@@ -45,7 +45,14 @@ class DockerSandboxProvider(ISandboxProvider):
     def _get_client(self) -> Any:
         if self._client is None:
             import docker
-            self._client = docker.DockerClient(base_url=self.docker_host)
+            try:
+                if self.docker_host and self.docker_host not in ("auto", "default", "npipe"):
+                    self._client = docker.DockerClient(base_url=self.docker_host)
+                    self._client.ping()
+                else:
+                    self._client = docker.from_env()
+            except Exception:
+                self._client = docker.from_env()
         return self._client
 
     async def initialize(self) -> None:
@@ -162,8 +169,8 @@ class DockerSandboxProvider(ISandboxProvider):
                 mem_limit=spec.mem_limit,
                 pids_limit=spec.pids_limit,
                 tmpfs={
-                    "/workspace": f"rw,exec,nosuid,nodev,size={spec.workspace_size}",
-                    "/tmp": f"rw,exec,nosuid,nodev,size={spec.tmp_size}",
+                    "/workspace": f"rw,exec,nosuid,nodev,size={spec.workspace_size},uid=1000,gid=1000,mode=1777",
+                    "/tmp": f"rw,exec,nosuid,nodev,size={spec.tmp_size},uid=1000,gid=1000,mode=1777",
                 },
                 volumes={},  # Zero host mounts
                 labels={
