@@ -1,7 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { Terminal as TerminalIcon, AlertTriangle } from "lucide-react";
+import { Terminal as TerminalIcon, AlertTriangle, CornerDownLeft } from "lucide-react";
 import type { TerminalChunk } from "../../types/run";
 import { Badge } from "../ui/badge";
 
@@ -9,18 +9,26 @@ export interface TerminalViewProps {
   chunks: TerminalChunk[];
   isTruncated?: boolean;
   truncationMessage?: string | null;
+  onExecuteCommand?: (command: string) => Promise<void> | void;
 }
 
 export function TerminalView({
   chunks,
   isTruncated = false,
   truncationMessage,
+  onExecuteCommand,
 }: TerminalViewProps) {
+  const [commandInput, setCommandInput] = useState("");
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermInstance = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const renderedSeqWatermark = useRef<number>(0);
   const isTruncationPrinted = useRef<boolean>(false);
+  const onExecuteRef = useRef(onExecuteCommand);
+
+  useEffect(() => {
+    onExecuteRef.current = onExecuteCommand;
+  }, [onExecuteCommand]);
 
   // Initialize xterm
   useEffect(() => {
@@ -46,7 +54,7 @@ export function TerminalView({
       },
       convertEol: true,
       scrollback: 5000,
-      disableStdin: true,
+      disableStdin: false,
     });
 
     const fitAddon = new FitAddon();
@@ -55,6 +63,39 @@ export function TerminalView({
     term.open(terminalRef.current);
     xtermInstance.current = term;
     fitAddonRef.current = fitAddon;
+
+    // Interactive keystroke handler directly inside xterm canvas
+    let currentLine = "";
+    const onDataDisposable = term.onData((data) => {
+      // Enter key (\r or \n)
+      if (data === "\r" || data === "\n") {
+        term.write("\r\n");
+        const toExec = currentLine.trim();
+        currentLine = "";
+        if (toExec && onExecuteRef.current) {
+          onExecuteRef.current(toExec);
+        } else {
+          term.write("\x1b[1;36m$ \x1b[0m");
+        }
+      }
+      // Backspace (\x7f or \b)
+      else if (data === "\x7f" || data === "\b") {
+        if (currentLine.length > 0) {
+          currentLine = currentLine.slice(0, -1);
+          term.write("\b \b");
+        }
+      }
+      // Ctrl+C (\x03)
+      else if (data === "\x03") {
+        currentLine = "";
+        term.write("^C\r\n\x1b[1;36m$ \x1b[0m");
+      }
+      // Printable characters
+      else if (data >= " ") {
+        currentLine += data;
+        term.write(data);
+      }
+    });
 
     // Initial safe fit
     const safeFit = () => {
@@ -83,6 +124,7 @@ export function TerminalView({
     }
 
     return () => {
+      onDataDisposable.dispose();
       resizeObserver?.disconnect();
       term.dispose();
       xtermInstance.current = null;
@@ -160,6 +202,38 @@ export function TerminalView({
         className="flex-1 w-full overflow-hidden p-1"
         style={{ minHeight: "150px" }}
       />
+
+      {/* Interactive Command Input Bar */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const cmd = commandInput.trim();
+          if (cmd && onExecuteCommand) {
+            onExecuteCommand(cmd);
+            setCommandInput("");
+          }
+        }}
+        className="flex items-center border-t border-slate-800 bg-[#0d1424] px-3 py-1.5 space-x-2"
+      >
+        <div className="flex items-center space-x-1.5 font-mono text-xs text-blue-400 shrink-0 font-bold select-none">
+          <span>$</span>
+        </div>
+        <input
+          type="text"
+          value={commandInput}
+          onChange={(e) => setCommandInput(e.target.value)}
+          placeholder="Type command or input (e.g. python hangman.py, pytest, a, b)..."
+          className="flex-1 bg-transparent text-xs font-mono text-slate-100 placeholder:text-slate-600 focus:outline-none"
+        />
+        <button
+          type="submit"
+          disabled={!commandInput.trim()}
+          className="rounded-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 px-3 py-1 text-[11px] font-bold text-white transition-colors flex items-center space-x-1 shrink-0"
+        >
+          <span>Send</span>
+          <CornerDownLeft className="h-3 w-3" />
+        </button>
+      </form>
     </div>
   );
 }

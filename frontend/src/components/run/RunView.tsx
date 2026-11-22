@@ -251,12 +251,7 @@ export function RunView({ runId, onBack }: RunViewProps) {
     }
   };
 
-  const handleRunFile = async (filename: string) => {
-    let cmd = `python ${filename}`;
-    if (filename.endsWith(".rs")) cmd = "cargo run";
-    else if (filename.endsWith(".sh")) cmd = `bash ${filename}`;
-    else if (filename.endsWith(".js")) cmd = `node ${filename}`;
-
+  const executeShellCommand = async (cmd: string) => {
     setIsRunningFile(true);
     setBottomTab("terminal");
     setBottomPanelExpanded(true);
@@ -320,6 +315,14 @@ export function RunView({ runId, onBack }: RunViewProps) {
     } finally {
       setIsRunningFile(false);
     }
+  };
+
+  const handleRunFile = async (filename: string) => {
+    let cmd = `python ${filename}`;
+    if (filename.endsWith(".rs")) cmd = "cargo run";
+    else if (filename.endsWith(".sh")) cmd = `bash ${filename}`;
+    else if (filename.endsWith(".js")) cmd = `node ${filename}`;
+    await executeShellCommand(cmd);
   };
 
   const handleRerunTask = async () => {
@@ -649,6 +652,7 @@ export function RunView({ runId, onBack }: RunViewProps) {
                     chunks={state.terminalChunks}
                     isTruncated={state.isTerminalTruncated}
                     truncationMessage={state.truncationMessage}
+                    onExecuteCommand={executeShellCommand}
                   />
                 )}
 
