@@ -21,6 +21,7 @@ dependencies = [
     "httpx>=0.27.0",
     "cryptography>=42.0.0",
     "pyjwt[crypto]>=2.8.0",
+    "python-multipart>=0.0.9",
 ]
 
 [tool.pytest.ini_options]
@@ -33,3 +34,8 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+ignore = [
+    "B008",  # do not perform function calls in argument defaults (FastAPI Depends)
+]

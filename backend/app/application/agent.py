@@ -17,6 +17,7 @@ import asyncio
 import logging
 from typing import Any
 
+from backend.app.application.coalescing import TerminalCoalescer
 from backend.app.application.diff import compute_diff, create_baseline, store_patch_artifact
 from backend.app.application.state_machine import ActionResult, RunStateMachine
 from backend.app.application.verification import FreshVerificationTracker
@@ -277,6 +278,7 @@ class AgentRunner:
         storage: IObjectStorage,
         control: AgentControl | None = None,
         settings: Settings | None = None,
+        coalescer: TerminalCoalescer | None = None,
     ) -> None:
         self.run = run
         self.repository = repository
@@ -303,6 +305,15 @@ class AgentRunner:
             self.control = control
             self.control.attach_state_machine(self.state_machine)
             self.control.attach_sandbox(sandbox)
+
+        if coalescer is not None:
+            self.coalescer = coalescer
+        else:
+            self.coalescer = TerminalCoalescer(
+                run_id=run.id,
+                emit_callback=self.repository.append_event,
+                max_bytes=self.settings.MAX_OUTPUT_BYTES_PER_RUN,
+            )
 
         self.tracker = FreshVerificationTracker(mode=run.options.verification)
         self.step_count: int = 0
@@ -350,41 +361,22 @@ class AgentRunner:
         exit_code = 0
 
         timeout = float(self.settings.COMMAND_TIMEOUT_SECONDS)
-        max_bytes = self.settings.MAX_OUTPUT_BYTES_PER_RUN
 
         async for ev in self.sandbox.run(command, cwd="/workspace", timeout=timeout):
             if ev.stream == "exit" and ev.exit_code is not None:
                 exit_code = ev.exit_code
             elif ev.stream in ("stdout", "stderr"):
                 data = ev.data
-                data_bytes = len(data.encode("utf-8", errors="replace"))
-                if self.total_output_bytes + data_bytes > max_bytes:
-                    if not self.truncation_emitted:
-                        self.truncation_emitted = True
-                        await self.repository.append_event(
-                            self.run.id,
-                            {
-                                "type": "truncation_marker",
-                                "payload": {
-                                    "message": f"Run output exceeded limit of {max_bytes} bytes; terminal output truncated.",
-                                    "limit": max_bytes,
-                                },
-                            },
-                        )
-                else:
-                    self.total_output_bytes += data_bytes
-                    await self.repository.append_event(
-                        self.run.id,
-                        {
-                            "type": "terminal_output",
-                            "payload": {"stream": ev.stream, "data": data},
-                        },
-                    )
-
+                await self.coalescer.feed(ev.stream, data)
                 if ev.stream == "stdout":
                     stdout_chunks.append(data)
                 else:
                     stderr_chunks.append(data)
+
+        # Flush any coalesced output immediately upon command completion
+        await self.coalescer.flush()
+        self.total_output_bytes = self.coalescer.total_bytes_emitted
+        self.truncation_emitted = self.coalescer.is_truncated
 
         # Track failure counts
         if exit_code != 0:
@@ -724,6 +716,7 @@ async def run_agent(
     storage: IObjectStorage,
     control: AgentControl | None = None,
     settings: Settings | None = None,
+    coalescer: TerminalCoalescer | None = None,
 ) -> Run:
     """Entry point to execute an agent run."""
     run = await repository.get(run_id)
@@ -738,5 +731,6 @@ async def run_agent(
         storage=storage,
         control=control,
         settings=settings,
+        coalescer=coalescer,
     )
     return await runner.run_loop()

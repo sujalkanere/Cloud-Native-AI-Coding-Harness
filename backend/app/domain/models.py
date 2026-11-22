@@ -26,6 +26,11 @@ class RunStatus(str, Enum):
     FAILED = "FAILED"
     TERMINATED = "TERMINATED"
 
+    @property
+    def is_terminal(self) -> bool:
+        """Returns True if the status represents a final terminal state."""
+        return self in (RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.TERMINATED)
+
 
 class VerificationMode(str, Enum):
     """Run verification mode option from Spec §3.5 & §4."""

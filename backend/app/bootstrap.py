@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from backend.app.application.concurrency import RunConcurrencyManager
 from backend.app.application.redaction import SecretRedactor
 from backend.app.config import Settings, get_settings
 from backend.app.domain.interfaces import (
@@ -44,6 +45,7 @@ class AppContainer:
     run_repository: IRunRepository
     sandbox_provider: ISandboxProvider
     session_factory: async_sessionmaker[AsyncSession]
+    concurrency_manager: RunConcurrencyManager | None = None
 
 
 def bootstrap(settings: Settings | None = None) -> AppContainer:
@@ -136,6 +138,14 @@ def bootstrap(settings: Settings | None = None) -> AppContainer:
         default_spec=default_spec,
     )
 
+    concurrency_manager = RunConcurrencyManager(
+        repository=run_repository,
+        sandbox_provider=sandbox_provider,
+        llm_provider=llm_provider,
+        storage=storage,
+        settings=active_settings,
+    )
+
     return AppContainer(
         settings=active_settings,
         redactor=redactor,
@@ -145,4 +155,5 @@ def bootstrap(settings: Settings | None = None) -> AppContainer:
         run_repository=run_repository,
         sandbox_provider=sandbox_provider,
         session_factory=session_factory,
+        concurrency_manager=concurrency_manager,
     )
