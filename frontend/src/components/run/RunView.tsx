@@ -339,7 +339,13 @@ export function RunView({ runId, onBack }: RunViewProps) {
     if (filename.endsWith(".rs")) cmd = "cargo run";
     else if (filename.endsWith(".sh")) cmd = `bash ${filename}`;
     else if (filename.endsWith(".js")) cmd = `node ${filename}`;
-    await executeShellCommand(cmd);
+
+    setBottomTab("terminal");
+    setBottomPanelExpanded(true);
+
+    window.dispatchEvent(
+      new CustomEvent("execute-terminal-command", { detail: { command: cmd } })
+    );
   };
 
   const handleRerunTask = async () => {
@@ -666,6 +672,7 @@ export function RunView({ runId, onBack }: RunViewProps) {
               <div className="flex-1 overflow-hidden">
                 {bottomTab === "terminal" && (
                   <TerminalView
+                    runId={runId}
                     chunks={state.terminalChunks}
                     isTruncated={state.isTerminalTruncated}
                     truncationMessage={state.truncationMessage}

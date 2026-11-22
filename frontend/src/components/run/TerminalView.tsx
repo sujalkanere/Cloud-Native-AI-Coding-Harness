@@ -6,6 +6,7 @@ import type { TerminalChunk } from "../../types/run";
 import { Badge } from "../ui/badge";
 
 export interface TerminalViewProps {
+  runId?: string;
   chunks: TerminalChunk[];
   isTruncated?: boolean;
   truncationMessage?: string | null;
@@ -13,6 +14,7 @@ export interface TerminalViewProps {
 }
 
 export function TerminalView({
+  runId,
   chunks,
   isTruncated = false,
   truncationMessage,
@@ -25,10 +27,56 @@ export function TerminalView({
   const renderedSeqWatermark = useRef<number>(0);
   const isTruncationPrinted = useRef<boolean>(false);
   const onExecuteRef = useRef(onExecuteCommand);
+  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     onExecuteRef.current = onExecuteCommand;
   }, [onExecuteCommand]);
+
+  // Connect to interactive PTY WebSocket for real bidirectional terminal session
+  useEffect(() => {
+    if (!runId) return;
+
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const host = window.location.hostname || "127.0.0.1";
+    const wsUrl = `${protocol}//${host}:8000/api/runs/${runId}/terminal`;
+
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onmessage = (event) => {
+        if (xtermInstance.current && typeof event.data === "string") {
+          xtermInstance.current.write(event.data);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.debug("Terminal WebSocket connection error:", err);
+      };
+    } catch {
+      // Fallback
+    }
+
+    // Listen for custom trigger to execute commands in terminal
+    const handleCommandTrigger = (e: Event) => {
+      const customEvent = e as CustomEvent<{ command: string }>;
+      const cmd = customEvent.detail?.command;
+      if (cmd && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(cmd + "\r");
+      }
+    };
+    window.addEventListener("execute-terminal-command", handleCommandTrigger);
+
+    return () => {
+      window.removeEventListener("execute-terminal-command", handleCommandTrigger);
+      if (ws) {
+        ws.close();
+      }
+      wsRef.current = null;
+    };
+  }, [runId]);
 
   // Initialize xterm
   useEffect(() => {
@@ -67,6 +115,10 @@ export function TerminalView({
     // Interactive keystroke handler directly inside xterm canvas
     let currentLine = "";
     const onDataDisposable = term.onData((data) => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(data);
+        return;
+      }
       // Enter key (\r or \n)
       if (data === "\r" || data === "\n") {
         term.write("\r\n");
@@ -208,7 +260,11 @@ export function TerminalView({
         onSubmit={(e) => {
           e.preventDefault();
           const cmd = commandInput.trim();
-          if (cmd && onExecuteCommand) {
+          if (!cmd) return;
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(cmd + "\r");
+            setCommandInput("");
+          } else if (onExecuteCommand) {
             onExecuteCommand(cmd);
             setCommandInput("");
           }
