@@ -1,25 +1,34 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import {
   ArrowLeft,
   Activity,
   CheckCircle,
   XCircle,
   Clock,
-  Shield,
   Layers,
-  Wifi,
-  WifiOff,
+  FileCode,
+  GitBranch,
+  Terminal as TerminalIcon,
+  Sparkles,
+  ChevronUp,
+  ChevronDown,
+  X,
+  Play,
+  Pause,
+  Square,
+  Download,
 } from "lucide-react";
-import type { RunStatus } from "../../types/run";
+import type { RunStatus, FileDiff } from "../../types/run";
 import { useRunEvents } from "../../hooks/useRunEvents";
 import { useRunDetails } from "../../hooks/useRunDetails";
-import { ControlBar } from "./ControlBar";
-import { ReasoningStream } from "./ReasoningStream";
-import { TerminalView } from "./TerminalView";
+import { api } from "../../services/api";
+import { ActivityBar, SidebarTab } from "./ActivityBar";
+import { ExplorerSidebar, WorkspaceFile } from "./ExplorerSidebar";
+import { CodeEditorView } from "./CodeEditorView";
 import { DiffViewer } from "./DiffViewer";
-import { Button } from "../ui/button";
+import { TerminalView } from "./TerminalView";
+import { ReasoningStream } from "./ReasoningStream";
 import { Badge } from "../ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 
 export interface RunViewProps {
   runId: string;
@@ -27,14 +36,27 @@ export interface RunViewProps {
 }
 
 export function RunView({ runId, onBack }: RunViewProps) {
-  const { run, refetch: refetchRun } = useRunDetails({ runId, pollInterval: 5000 });
+  const { run, refetch: refetchRun } = useRunDetails({ runId, pollInterval: 4000 });
   const { state, connectionStatus } = useRunEvents({ runId, enabled: true });
 
-  // Merge live status from WebSocket reducer or API run metadata
   const currentStatus: RunStatus = state.status !== "QUEUED" ? state.status : (run?.status ?? "QUEUED");
   const isPausing: boolean = state.isPausing || (run?.is_pausing ?? false);
 
-  // Compute live duration
+  // VS Code Layout States
+  const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>("files");
+  const [openTabs, setOpenTabs] = useState<string[]>(["diff"]);
+  const [activeTab, setActiveTab] = useState<string>("diff");
+  const [bottomTab, setBottomTab] = useState<"terminal" | "thoughts" | "actions">("terminal");
+  const [bottomPanelExpanded, setBottomPanelExpanded] = useState<boolean>(true);
+
+  // File system and diffs
+  const [files, setFiles] = useState<WorkspaceFile[]>([]);
+  const [fileContents, setFileContents] = useState<Record<string, string>>({});
+  const [diffs, setDiffs] = useState<FileDiff[]>([]);
+  const [guidanceText, setGuidanceText] = useState("");
+  const [isSendingGuidance, setIsSendingGuidance] = useState(false);
+
+  // Duration
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
@@ -59,6 +81,172 @@ export function RunView({ runId, onBack }: RunViewProps) {
     const secs = elapsedSeconds % 60;
     return `${mins}m ${secs < 10 ? "0" : ""}${secs}s`;
   }, [elapsedSeconds]);
+
+  // Sync diffs from API
+  const refreshDiffs = useCallback(async () => {
+    try {
+      const data = await api.getDiff(runId);
+      if (data) setDiffs(data);
+    } catch {
+      // ignore
+    }
+  }, [runId]);
+
+  // Sync files from API & tool calls
+  const refreshFiles = useCallback(async () => {
+    try {
+      const backendFiles = await api.listFiles(runId);
+      const fileMap = new Map<string, WorkspaceFile>();
+
+      // Populate from backend
+      for (const bf of backendFiles) {
+        fileMap.set(bf.path, { path: bf.path, name: bf.name, status: "modified" });
+      }
+
+      // Populate from tool calls (write_file)
+      for (const tc of state.toolCalls.values()) {
+        if (tc.name === "write_file" && tc.arguments?.path) {
+          const p = tc.arguments.path;
+          const name = p.split("/").pop() || p;
+          fileMap.set(p, {
+            path: p,
+            name,
+            content: tc.arguments.content,
+            status: "added",
+          });
+          if (tc.arguments.content) {
+            setFileContents((prev) => ({ ...prev, [p]: tc.arguments.content }));
+          }
+        }
+      }
+
+      // Populate from diffs
+      for (const d of diffs) {
+        if (d.status !== "deleted") {
+          const existing = fileMap.get(d.path);
+          fileMap.set(d.path, {
+            path: d.path,
+            name: d.path.split("/").pop() || d.path,
+            status: d.status === "added" ? "added" : "modified",
+            additions: d.additions,
+            deletions: d.deletions,
+            ...existing,
+          });
+        }
+      }
+
+      const fileList = Array.from(fileMap.values());
+      setFiles(fileList);
+
+      // Auto-open first created file if only diff was open
+      if (fileList.length > 0 && openTabs.length === 1 && openTabs[0] === "diff") {
+        const firstFile = fileList[0].path;
+        setOpenTabs(["diff", firstFile]);
+        setActiveTab(firstFile);
+      }
+    } catch {
+      // ignore
+    }
+  }, [runId, state.toolCalls, diffs, openTabs]);
+
+  useEffect(() => {
+    refreshDiffs();
+  }, [refreshDiffs, state.events.length]);
+
+  useEffect(() => {
+    refreshFiles();
+    const interval = setInterval(refreshFiles, 3000);
+    return () => clearInterval(interval);
+  }, [refreshFiles]);
+
+  // Fetch content when opening a tab
+  const handleSelectFile = async (filePath: string) => {
+    if (filePath.startsWith("diff:")) {
+      if (!openTabs.includes("diff")) {
+        setOpenTabs((prev) => [...prev, "diff"]);
+      }
+      setActiveTab("diff");
+      return;
+    }
+
+    if (!openTabs.includes(filePath)) {
+      setOpenTabs((prev) => [...prev, filePath]);
+    }
+    setActiveTab(filePath);
+
+    if (!fileContents[filePath]) {
+      try {
+        const res = await api.getFileContent(runId, filePath);
+        if (res?.content !== undefined) {
+          setFileContents((prev) => ({ ...prev, [filePath]: res.content }));
+        }
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const handleCloseTab = (tabToClose: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const nextTabs = openTabs.filter((t) => t !== tabToClose);
+    setOpenTabs(nextTabs);
+    if (activeTab === tabToClose) {
+      setActiveTab(nextTabs[nextTabs.length - 1] || "diff");
+    }
+  };
+
+  // Agent Controls
+  const handlePause = async () => {
+    try {
+      await api.pauseRun(runId, "boundary");
+      refetchRun();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleResume = async () => {
+    try {
+      await api.resumeRun(runId);
+      refetchRun();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleTerminate = async () => {
+    if (window.confirm("Are you sure you want to terminate this run?")) {
+      try {
+        await api.terminateRun(runId, "User requested termination");
+        refetchRun();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  };
+
+  const handleSendGuidance = async () => {
+    if (!guidanceText.trim()) return;
+    try {
+      setIsSendingGuidance(true);
+      await api.sendGuidance(runId, guidanceText.trim());
+      setGuidanceText("");
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSendingGuidance(false);
+    }
+  };
+
+  const handleDownloadArtifact = async (type: "patch" | "logs") => {
+    try {
+      const urls = await api.getArtifactUrls(runId);
+      const url = type === "patch" ? urls.patch_url : urls.logs_url;
+      if (url) window.open(url, "_blank");
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const getStatusBadge = () => {
     switch (currentStatus) {
@@ -101,128 +289,300 @@ export function RunView({ runId, onBack }: RunViewProps) {
     }
   };
 
+  const totalAdditions = useMemo(() => diffs.reduce((s, d) => s + (d.additions || 0), 0), [diffs]);
+  const totalDeletions = useMemo(() => diffs.reduce((s, d) => s + (d.deletions || 0), 0), [diffs]);
+
   return (
-    <div className="flex h-screen flex-col bg-slate-950 text-slate-100 overflow-hidden">
-      {/* Top Navigation & Metadata Header */}
-      <header className="flex items-center justify-between border-b border-slate-800 bg-slate-900/90 px-4 py-2.5">
-        <div className="flex items-center space-x-3 overflow-hidden">
+    <div className="flex h-screen flex-col bg-[#0b0f19] text-slate-100 overflow-hidden font-sans select-none">
+      {/* VS Code Title Bar */}
+      <header className="flex h-11 items-center justify-between border-b border-slate-800 bg-[#0d1424] px-4 text-xs">
+        {/* Left: Project title & Run info */}
+        <div className="flex items-center space-x-3 truncate">
           {onBack && (
-            <Button
-              variant="ghost"
-              size="sm"
+            <button
               onClick={onBack}
-              className="h-8 w-8 p-0 text-slate-400 hover:text-white"
+              className="flex items-center space-x-1.5 rounded-full bg-slate-800 hover:bg-slate-700 px-3 py-1 text-slate-300 hover:text-white transition-colors"
+              title="Return to sessions"
             >
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
+              <ArrowLeft className="h-3.5 w-3.5" />
+              <span className="font-medium text-[11px]">Sessions</span>
+            </button>
           )}
 
           <div className="flex items-center space-x-2">
             <Layers className="h-4 w-4 text-blue-500 shrink-0" />
-            <span className="font-mono text-xs font-bold text-white shrink-0">
-              {runId}
+            <span className="font-mono font-bold text-white shrink-0">
+              {runId.slice(0, 8)}
             </span>
             {run?.task && (
-              <span className="hidden md:inline truncate max-w-md text-xs text-slate-400 border-l border-slate-800 pl-2">
+              <span className="hidden sm:inline truncate max-w-sm lg:max-w-md text-slate-400 border-l border-slate-800 pl-2">
                 {run.task}
               </span>
             )}
           </div>
         </div>
 
+        {/* Center: Status & Metrics */}
         <div className="flex items-center space-x-3 shrink-0">
-          {/* Verification Mode */}
-          <div className="hidden sm:flex items-center text-xs text-slate-400">
-            <Shield className="mr-1 h-3.5 w-3.5 text-blue-400" />
-            <span>Mode: {run?.options?.verification || "required"}</span>
-          </div>
-
-          {/* Duration */}
-          <div className="flex items-center text-xs text-slate-400 font-mono">
-            <Clock className="mr-1 h-3.5 w-3.5 text-slate-500" />
+          <div className="hidden md:flex items-center space-x-2 text-slate-400 font-mono text-[11px]">
+            <Clock className="h-3.5 w-3.5 text-slate-500" />
             <span>{formattedDuration}</span>
           </div>
 
-          {/* Status Badge */}
-          {getStatusBadge()}
-
-          {/* Connection Indicator */}
-          <div
-            title={`WebSocket: ${connectionStatus}`}
-            className="flex items-center"
-          >
-            {connectionStatus === "connected" ? (
-              <Wifi className="h-3.5 w-3.5 text-emerald-400" />
-            ) : (
-              <WifiOff className="h-3.5 w-3.5 text-amber-500 animate-pulse" />
-            )}
+          <div className="hidden sm:flex items-center space-x-1 font-mono text-[11px] bg-slate-900 border border-slate-800 px-2 py-0.5 rounded-full">
+            <span className="text-emerald-400 font-bold">+{totalAdditions}</span>
+            <span className="text-rose-400 font-bold">-{totalDeletions}</span>
           </div>
+
+          {getStatusBadge()}
+        </div>
+
+        {/* Right: Meta-style Control CTA Buttons */}
+        <div className="flex items-center space-x-2 shrink-0">
+          {currentStatus === "RUNNING" && (
+            <button
+              onClick={handlePause}
+              disabled={isPausing}
+              className="flex items-center space-x-1 rounded-full bg-amber-600 hover:bg-amber-500 disabled:opacity-50 px-3 py-1 text-[11px] font-semibold text-white transition-colors shadow-sm"
+              title="Pause at step boundary"
+            >
+              <Pause className="h-3 w-3" />
+              <span>{isPausing ? "Pausing..." : "Pause"}</span>
+            </button>
+          )}
+
+          {currentStatus === "PAUSED" && (
+            <button
+              onClick={handleResume}
+              className="flex items-center space-x-1 rounded-full bg-blue-600 hover:bg-blue-500 px-3 py-1 text-[11px] font-semibold text-white transition-colors shadow-sm"
+              title="Resume execution"
+            >
+              <Play className="h-3 w-3" />
+              <span>Resume</span>
+            </button>
+          )}
+
+          {["QUEUED", "PREPARING", "RUNNING", "PAUSED"].includes(currentStatus) && (
+            <button
+              onClick={handleTerminate}
+              className="flex items-center space-x-1 rounded-full bg-slate-800 hover:bg-rose-900/60 hover:text-rose-300 px-3 py-1 text-[11px] font-medium text-slate-300 transition-colors"
+              title="Terminate run"
+            >
+              <Square className="h-3 w-3" />
+              <span>Stop</span>
+            </button>
+          )}
+
+          {["SUCCEEDED", "FAILED", "TERMINATED"].includes(currentStatus) && (
+            <button
+              onClick={() => handleDownloadArtifact("patch")}
+              className="flex items-center space-x-1 rounded-full bg-blue-600 hover:bg-blue-500 px-3 py-1 text-[11px] font-semibold text-white transition-colors"
+              title="Download patch diff"
+            >
+              <Download className="h-3 w-3" />
+              <span>Download Patch</span>
+            </button>
+          )}
         </div>
       </header>
 
-      {/* Control Bar (Pause, Resume, Guidance, Terminate, Artifacts) */}
-      {run ? (
-        <ControlBar
-          run={run}
-          status={currentStatus}
-          isPausing={isPausing}
-          onControlAction={() => refetchRun()}
+      {/* Main IDE Workspace */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Leftmost Activity Bar */}
+        <ActivityBar
+          activeTab={activeSidebarTab}
+          onTabChange={setActiveSidebarTab}
+          diffCount={diffs.length}
+          connectionStatus={connectionStatus}
+          onBack={onBack}
         />
-      ) : (
-        <div className="h-10 bg-slate-900 border-b border-slate-800 animate-pulse" />
-      )}
 
-      {/* Main Workspace: Responsive Layout (1280px / 768px) */}
-      <main className="flex flex-1 flex-col xl:flex-row overflow-hidden">
-        {/* Left Column: Reasoning & Execution Stream */}
-        <div className="h-1/2 xl:h-full w-full xl:w-[40%] 2xl:w-[38%] border-b xl:border-b-0 xl:border-r border-slate-800 overflow-hidden flex flex-col">
-          <ReasoningStream
-            events={state.events}
-            toolCalls={state.toolCalls}
+        {/* Primary Sidebar (Explorer / Git / Agent) */}
+        <div className="w-64 xl:w-72 shrink-0 overflow-hidden flex flex-col">
+          <ExplorerSidebar
+            activeView={activeSidebarTab}
+            files={files}
+            selectedFile={activeTab}
+            onSelectFile={handleSelectFile}
+            run={run}
+            diffs={diffs}
+            guidanceText={guidanceText}
+            onGuidanceChange={setGuidanceText}
+            onSendGuidance={handleSendGuidance}
+            isSendingGuidance={isSendingGuidance}
+            totalTokens={state.events.length * 35}
+            stepCount={state.events.filter((e) => e.type === "tool_call").length}
           />
         </div>
 
-        {/* Right Column: Terminal & Diff Viewer */}
-        <div className="h-1/2 xl:h-full w-full xl:w-[60%] 2xl:w-[62%] flex flex-col overflow-hidden">
-          {/* Desktop (>= 1280px): Vertically split Terminal (top) and Diff (bottom) */}
-          <div className="hidden xl:flex xl:flex-col h-full overflow-hidden">
-            <div className="h-1/2 border-b border-slate-800 overflow-hidden">
-              <TerminalView
-                chunks={state.terminalChunks}
-                isTruncated={state.isTerminalTruncated}
-                truncationMessage={state.truncationMessage}
-              />
-            </div>
-            <div className="h-1/2 overflow-hidden">
-              <DiffViewer runId={runId} />
-            </div>
+        {/* Center & Right: Editor Area + Bottom Panel */}
+        <div className="flex flex-1 flex-col overflow-hidden bg-[#090d16]">
+          {/* VS Code Editor Tabs Bar */}
+          <div className="flex h-9 items-center border-b border-slate-800 bg-[#0d1424] px-1 overflow-x-auto select-none">
+            {openTabs.map((tab) => {
+              const isDiffTab = tab === "diff";
+              const isActive = activeTab === tab;
+              const tabLabel = isDiffTab ? "Git Changes" : tab.split("/").pop();
+
+              return (
+                <div
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`group flex h-full cursor-pointer items-center space-x-2 border-r border-slate-800/80 px-3 text-xs transition-colors ${
+                    isActive
+                      ? "bg-[#0b0f19] text-white font-medium border-t-2 border-t-blue-500"
+                      : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
+                  }`}
+                >
+                  {isDiffTab ? (
+                    <GitBranch className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+                  ) : (
+                    <FileCode className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                  )}
+                  <span className="truncate max-w-[140px]">{tabLabel}</span>
+
+                  {openTabs.length > 1 && (
+                    <button
+                      onClick={(e) => handleCloseTab(tab, e)}
+                      className="ml-1 rounded p-0.5 text-slate-500 hover:bg-slate-700 hover:text-white"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
-          {/* Medium / Tablet (< 1280px): Segmented Tab View */}
-          <div className="flex xl:hidden flex-col h-full overflow-hidden">
-            <Tabs defaultValue="terminal" className="flex-1 flex flex-col overflow-hidden">
-              <div className="border-b border-slate-800 bg-slate-900/90 px-3 py-1">
-                <TabsList className="bg-slate-950">
-                  <TabsTrigger value="terminal">Execution Terminal</TabsTrigger>
-                  <TabsTrigger value="diff">Workspace Diff</TabsTrigger>
-                </TabsList>
+          {/* Active Editor Content View */}
+          <div className="flex-1 overflow-hidden relative">
+            {activeTab === "diff" ? (
+              <DiffViewer runId={runId} diffs={diffs} onRefresh={refreshDiffs} />
+            ) : (
+              <CodeEditorView
+                filename={activeTab.split("/").pop() || activeTab}
+                content={fileContents[activeTab] || "# Loading file content..."}
+              />
+            )}
+          </div>
+
+          {/* Bottom Panel (Terminal / Reasoning / Tool Activity) */}
+          <div
+            className={`border-t border-slate-800 bg-[#0d1424] flex flex-col transition-all duration-150 ${
+              bottomPanelExpanded ? "h-64 xl:h-72" : "h-9"
+            }`}
+          >
+            {/* Bottom Panel Header */}
+            <div className="flex h-9 items-center justify-between border-b border-slate-800/80 px-3 text-xs select-none">
+              <div className="flex items-center space-x-1">
+                <button
+                  onClick={() => {
+                    setBottomTab("terminal");
+                    setBottomPanelExpanded(true);
+                  }}
+                  className={`flex items-center space-x-1.5 px-3 py-1 rounded text-xs font-medium uppercase tracking-wider transition-colors ${
+                    bottomTab === "terminal" && bottomPanelExpanded
+                      ? "text-blue-400 border-b-2 border-blue-500"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <TerminalIcon className="h-3.5 w-3.5" />
+                  <span>Terminal</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setBottomTab("thoughts");
+                    setBottomPanelExpanded(true);
+                  }}
+                  className={`flex items-center space-x-1.5 px-3 py-1 rounded text-xs font-medium uppercase tracking-wider transition-colors ${
+                    bottomTab === "thoughts" && bottomPanelExpanded
+                      ? "text-blue-400 border-b-2 border-blue-500"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>Agent Thoughts</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setBottomTab("actions");
+                    setBottomPanelExpanded(true);
+                  }}
+                  className={`flex items-center space-x-1.5 px-3 py-1 rounded text-xs font-medium uppercase tracking-wider transition-colors ${
+                    bottomTab === "actions" && bottomPanelExpanded
+                      ? "text-blue-400 border-b-2 border-blue-500"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <Activity className="h-3.5 w-3.5" />
+                  <span>Actions ({state.toolCalls.size})</span>
+                </button>
               </div>
 
-              <TabsContent value="terminal" className="flex-1 m-0 overflow-hidden">
-                <TerminalView
-                  chunks={state.terminalChunks}
-                  isTruncated={state.isTerminalTruncated}
-                  truncationMessage={state.truncationMessage}
-                />
-              </TabsContent>
+              {/* Panel Toggle */}
+              <button
+                onClick={() => setBottomPanelExpanded(!bottomPanelExpanded)}
+                className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
+                title={bottomPanelExpanded ? "Collapse panel" : "Expand panel"}
+              >
+                {bottomPanelExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+              </button>
+            </div>
 
-              <TabsContent value="diff" className="flex-1 m-0 overflow-hidden">
-                <DiffViewer runId={runId} />
-              </TabsContent>
-            </Tabs>
+            {/* Bottom Panel Content */}
+            {bottomPanelExpanded && (
+              <div className="flex-1 overflow-hidden">
+                {bottomTab === "terminal" && (
+                  <TerminalView
+                    chunks={state.terminalChunks}
+                    isTruncated={state.isTerminalTruncated}
+                    truncationMessage={state.truncationMessage}
+                  />
+                )}
+
+                {bottomTab === "thoughts" && (
+                  <div className="h-full overflow-y-auto p-3">
+                    <ReasoningStream
+                      events={state.events}
+                      toolCalls={state.toolCalls}
+                    />
+                  </div>
+                )}
+
+                {bottomTab === "actions" && (
+                  <div className="h-full overflow-y-auto p-3 space-y-2 font-mono text-xs">
+                    {Array.from(state.toolCalls.values()).map((tc) => (
+                      <div
+                        key={tc.id}
+                        className="rounded border border-slate-800 bg-[#090d16] p-2 space-y-1"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-blue-400">{tc.name}</span>
+                          <span className={`text-[10px] ${tc.result?.is_error ? "text-rose-400" : "text-emerald-400"}`}>
+                            {tc.result?.is_error ? "ERROR" : "OK"}
+                          </span>
+                        </div>
+                        {tc.arguments && (
+                          <div className="text-[11px] text-slate-400 truncate">
+                            {JSON.stringify(tc.arguments)}
+                          </div>
+                        )}
+                        {tc.result?.output && (
+                          <div className="text-[11px] text-slate-300 max-h-20 overflow-y-auto bg-slate-950 p-1.5 rounded">
+                            {tc.result.output}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
-      </main>
+      </div>
     </div>
   );
 }

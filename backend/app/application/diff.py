@@ -91,8 +91,8 @@ async def compute_diff(
     if not baseline_sha:
         return b""
 
-    # Stage untracked files as intent-to-add so git diff includes them
-    await _run_command_simple(sandbox, "git add -N .")
+    # Stage untracked and modified files so git diff captures everything
+    await _run_command_simple(sandbox, "git add -A")
 
     # Execute binary diff against baseline SHA
     _code, diff_out = await _run_command_simple(sandbox, f"git diff --binary {baseline_sha}")

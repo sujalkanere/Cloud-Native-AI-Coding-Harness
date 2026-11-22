@@ -147,6 +147,24 @@ export const api = {
   },
 
   /**
+   * Lists files present or created in workspace.
+   */
+  async listFiles(id: string): Promise<Array<{ path: string; name: string }>> {
+    return request<Array<{ path: string; name: string }>>(`/runs/${id}/files`, {
+      method: "GET",
+    });
+  },
+
+  /**
+   * Gets content of a specific file.
+   */
+  async getFileContent(id: string, path: string): Promise<{ path: string; content: string }> {
+    return request<{ path: string; content: string }>(`/runs/${id}/files/content?path=${encodeURIComponent(path)}`, {
+      method: "GET",
+    });
+  },
+
+  /**
    * Health probes.
    */
   async getHealthz(): Promise<HealthResponse> {

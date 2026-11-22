@@ -380,3 +380,72 @@ async def get_run_diff(
             logger.debug("Stored patch retrieval: %s", exc)
 
     return parse_diff_files(diff_bytes)
+
+
+@router.get("/{id}/files", response_model=list[dict[str, Any]])
+async def list_run_files(
+    id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    container: AppContainer = Depends(get_container),
+) -> list[dict[str, Any]]:
+    """Lists all files created or present in the run workspace."""
+    run = await container.run_repository.get(id, user_id=current_user.id)
+    if run is None:
+        raise EntityNotFoundError(f"Run '{id}' not found")
+
+    file_paths: list[str] = []
+
+    # 1. Try listing files from live sandbox
+    if container.concurrency_manager is not None:
+        handle = container.concurrency_manager.get_handle(id)
+        if handle and getattr(handle.control, "sandbox", None):
+            try:
+                entries = await handle.control.sandbox.list_dir(".")
+                file_paths = [e for e in entries if not e.startswith(".git")]
+            except (OSError, RuntimeError, ValueError, KeyError, AttributeError):
+                pass
+
+    # 2. Fall back to files parsed from diff
+    if not file_paths:
+        diffs = await get_run_diff(id=id, current_user=current_user, container=container)
+        file_paths = [d.path for d in diffs if d.status != "deleted" and not d.path.startswith(".git")]
+
+    return [{"path": p, "name": p.split("/")[-1]} for p in sorted(file_paths)]
+
+
+@router.get("/{id}/files/content", response_model=dict[str, str])
+async def get_run_file_content(
+    id: str,
+    path: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    container: AppContainer = Depends(get_container),
+) -> dict[str, str]:
+    """Reads text content of a specific file in the run workspace."""
+    run = await container.run_repository.get(id, user_id=current_user.id)
+    if run is None:
+        raise EntityNotFoundError(f"Run '{id}' not found")
+
+    content = ""
+
+    # 1. Try reading from active sandbox
+    if container.concurrency_manager is not None:
+        handle = container.concurrency_manager.get_handle(id)
+        if handle and getattr(handle.control, "sandbox", None):
+            try:
+                content = await handle.control.sandbox.read_file(path)
+                return {"path": path, "content": content}
+            except (OSError, RuntimeError, ValueError, KeyError, AttributeError):
+                pass
+
+    # 2. Fallback to extracting from diff patch if file was added
+    diffs = await get_run_diff(id=id, current_user=current_user, container=container)
+    for d in diffs:
+        if d.path == path and d.diff_patch:
+            lines = []
+            for line in d.diff_patch.splitlines():
+                if line.startswith("+") and not line.startswith("+++") or line.startswith(" "):
+                    lines.append(line[1:])
+            content = "\n".join(lines)
+            break
+
+    return {"path": path, "content": content}
