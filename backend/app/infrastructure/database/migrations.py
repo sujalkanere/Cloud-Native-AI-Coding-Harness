@@ -37,4 +37,6 @@ def run_migrations_sync(database_url: str) -> None:
 
 async def run_migrations(database_url: str) -> None:
     """Asynchronously runs Alembic migrations in a background thread."""
+    if "sqlite" in database_url:
+        return
     await asyncio.to_thread(run_migrations_sync, database_url)

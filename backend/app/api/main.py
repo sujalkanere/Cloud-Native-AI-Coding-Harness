@@ -37,6 +37,7 @@ from backend.app.bootstrap import AppContainer, bootstrap
 from backend.app.config import Settings, get_settings
 from backend.app.infrastructure.database.migrations import run_migrations
 from fastapi import FastAPI
+from sqlalchemy.exc import SQLAlchemyError
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +66,26 @@ def create_app(
         # 3. Automatically execute Alembic migrations on startup (Spec §7, Feature 49)
         if not skip_migrations:
             try:
-                logger.info("Executing startup Alembic migrations...")
-                await run_migrations(active_settings.DATABASE_URL)
-                logger.info("Startup Alembic migrations completed successfully.")
-            except (OSError, RuntimeError, ValueError, KeyError, AttributeError) as exc:
-                logger.warning("Startup Alembic migration skipped or failed: %s", exc)
+                if "sqlite" in active_settings.DATABASE_URL:
+                    logger.info("Initializing SQLite database schema...")
+                    from backend.app.infrastructure.database.models import Base
+
+                    async with app_container.session_factory.kw["bind"].begin() as conn:
+                        await conn.run_sync(Base.metadata.create_all)
+                    logger.info("SQLite schema initialized successfully.")
+                else:
+                    logger.info("Executing startup Alembic migrations...")
+                    await run_migrations(active_settings.DATABASE_URL)
+                    logger.info("Startup Alembic migrations completed successfully.")
+            except (OSError, RuntimeError, ValueError, KeyError, AttributeError, SQLAlchemyError) as exc:
+                logger.warning("Startup database initialization skipped or failed: %s", exc)
 
         # 4. Perform restart recovery (stale runs -> FAILED + reap orphan containers)
+        try:
+            from docker.errors import DockerException
+        except ImportError:
+            DockerException = OSError  # type: ignore[misc, assignment]
+
         try:
             recovered = await perform_restart_recovery(
                 repository=app_container.run_repository,
@@ -79,14 +93,14 @@ def create_app(
             )
             if recovered:
                 logger.info("Startup recovery processed %d stale runs.", len(recovered))
-        except (OSError, RuntimeError, ValueError, KeyError, AttributeError) as exc:
+        except (OSError, RuntimeError, ValueError, KeyError, AttributeError, DockerException) as exc:
             logger.warning("Startup recovery encountered issue: %s", exc)
 
         # 5. Initialize sandbox provider warm pool (Spec §5, Feature 41)
         if hasattr(app_container.sandbox_provider, "initialize"):
             try:
                 await app_container.sandbox_provider.initialize()
-            except (OSError, RuntimeError, ValueError, KeyError, AttributeError) as exc:
+            except (OSError, RuntimeError, ValueError, KeyError, AttributeError, DockerException) as exc:
                 logger.warning("Sandbox provider warm pool initialization: %s", exc)
 
         yield
@@ -101,7 +115,7 @@ def create_app(
         if hasattr(app_container.sandbox_provider, "close"):
             try:
                 await app_container.sandbox_provider.close()
-            except (OSError, RuntimeError, ValueError, KeyError, AttributeError) as exc:
+            except (OSError, RuntimeError, ValueError, KeyError, AttributeError, DockerException) as exc:
                 logger.warning("Sandbox provider shutdown close: %s", exc)
 
         if hasattr(app_container.session_factory, "kw") and "bind" in app_container.session_factory.kw:

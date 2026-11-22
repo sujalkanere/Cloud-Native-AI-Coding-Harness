@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
     OPENAI_BASE_URL: str | None = None
+    APINEX_API_KEY: str | None = None
+    APINEX_BASE_URL: str = "https://api.apinex.bond/v1"
+    GROQ_API_KEY: str | None = None
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
 
     # Effective values populated by provider selection validator
     effective_llm_provider: str = Field(default="", init=False)
@@ -106,6 +110,8 @@ class Settings(BaseSettings):
             openai_key=self.OPENAI_API_KEY,
             harness_env=self.HARNESS_ENV,
             model=self.LLM_MODEL,
+            apinex_key=self.APINEX_API_KEY,
+            groq_key=self.GROQ_API_KEY,
         )
         object.__setattr__(self, "effective_llm_provider", provider)
         object.__setattr__(self, "effective_llm_model", model)
@@ -118,6 +124,8 @@ class Settings(BaseSettings):
         for val in [
             self.ANTHROPIC_API_KEY,
             self.OPENAI_API_KEY,
+            self.APINEX_API_KEY,
+            self.GROQ_API_KEY,
             self.S3_SECRET_KEY,
             self.S3_ACCESS_KEY,
         ]:

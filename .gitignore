@@ -64,6 +64,10 @@ minio_data/
 .env.*.local
 *.pem
 *.key
+temp-key
+*.db
+*.sqlite
+*.sqlite3
 
 # Preserve template and documentation
 !.env.example

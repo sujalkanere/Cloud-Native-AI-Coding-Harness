@@ -17,6 +17,8 @@ from __future__ import annotations
 DEFAULT_MODELS: dict[str, str] = {
     "anthropic": "claude-3-5-sonnet-20241022",
     "openai": "gpt-4o",
+    "apinex": "gpt-4o",
+    "groq": "llama-3.3-70b-versatile",
     "scripted": "mock-scripted-model",
 }
 
@@ -29,6 +31,8 @@ def resolve_llm_provider(
     openai_key: str | None = None,
     harness_env: str = "development",
     model: str | None = None,
+    apinex_key: str | None = None,
+    groq_key: str | None = None,
 ) -> tuple[str, str]:
     """
     Resolves and validates the LLM provider and default model.
@@ -44,6 +48,8 @@ def resolve_llm_provider(
     )
     has_anthropic = bool(anthropic_key and anthropic_key.strip())
     has_openai = bool(openai_key and openai_key.strip())
+    has_apinex = bool(apinex_key and apinex_key.strip())
+    has_groq = bool(groq_key and groq_key.strip())
 
     # Environment integrity checks
     if env == "production" and provider == "scripted":
@@ -78,14 +84,42 @@ def resolve_llm_provider(
                 )
             return ("openai", model or DEFAULT_MODELS["openai"])
 
+        if provider == "apinex":
+            if not has_apinex and not has_openai:
+                raise ValueError(
+                    "LLM_PROVIDER is set to 'apinex' but APINEX_API_KEY is not configured."
+                )
+            return ("apinex", model or DEFAULT_MODELS["apinex"])
+
+        if provider == "groq":
+            if not has_groq and not has_openai:
+                raise ValueError(
+                    "LLM_PROVIDER is set to 'groq' but GROQ_API_KEY is not configured."
+                )
+            return ("groq", model or DEFAULT_MODELS["groq"])
+
         if provider == "scripted":
             return ("scripted", model or DEFAULT_MODELS["scripted"])
 
     # Unset provider inference
-    if has_anthropic and has_openai:
+    configured_keys = [
+        ("anthropic", has_anthropic),
+        ("openai", has_openai),
+        ("apinex", has_apinex),
+        ("groq", has_groq),
+    ]
+    active_providers = [name for name, has_key in configured_keys if has_key]
+
+    if has_anthropic and has_openai and len(active_providers) == 2:
         raise ValueError(
             "Both ANTHROPIC_API_KEY and OPENAI_API_KEY are configured, but LLM_PROVIDER is unset. "
             "Please explicitly set LLM_PROVIDER to 'anthropic' or 'openai'."
+        )
+
+    if len(active_providers) > 1:
+        raise ValueError(
+            f"Multiple LLM API keys configured ({', '.join(active_providers)}), but LLM_PROVIDER is unset. "
+            f"Please explicitly set LLM_PROVIDER."
         )
 
     if has_anthropic:
@@ -93,6 +127,12 @@ def resolve_llm_provider(
 
     if has_openai:
         return ("openai", model or DEFAULT_MODELS["openai"])
+
+    if has_apinex:
+        return ("apinex", model or DEFAULT_MODELS["apinex"])
+
+    if has_groq:
+        return ("groq", model or DEFAULT_MODELS["groq"])
 
     # Neither key present and provider unset
     raise ValueError(

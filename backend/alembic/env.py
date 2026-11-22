@@ -22,6 +22,9 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
+    url = config.get_main_option("sqlalchemy.url")
+    if url:
+        return url
     return os.environ.get(
         "DATABASE_URL",
         "postgresql+asyncpg://postgres:postgres@localhost:5432/harness",

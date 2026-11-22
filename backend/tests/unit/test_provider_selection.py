@@ -146,3 +146,37 @@ def test_unset_provider_with_neither_key_present_fails_fast_naming_variables() -
     # Must name both key variables
     assert "ANTHROPIC_API_KEY" in msg
     assert "OPENAI_API_KEY" in msg
+
+
+def test_explicit_apinex_with_key_succeeds() -> None:
+    provider, model = resolve_llm_provider(
+        llm_provider="apinex",
+        apinex_key="sk-apx-test",
+    )
+    assert provider == "apinex"
+    assert model == DEFAULT_MODELS["apinex"]
+
+
+def test_explicit_groq_with_key_succeeds() -> None:
+    provider, model = resolve_llm_provider(
+        llm_provider="groq",
+        groq_key="gsk-groq-test",
+    )
+    assert provider == "groq"
+    assert model == DEFAULT_MODELS["groq"]
+
+
+def test_explicit_apinex_without_key_fails_fast() -> None:
+    with pytest.raises(ValueError, match="APINEX_API_KEY is not configured"):
+        resolve_llm_provider(
+            llm_provider="apinex",
+            apinex_key="",
+        )
+
+
+def test_explicit_groq_without_key_fails_fast() -> None:
+    with pytest.raises(ValueError, match="GROQ_API_KEY is not configured"):
+        resolve_llm_provider(
+            llm_provider="groq",
+            groq_key="",
+        )

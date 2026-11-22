@@ -91,6 +91,24 @@ def bootstrap(settings: Settings | None = None) -> AppContainer:
             base_url=active_settings.OPENAI_BASE_URL,
             redactor=redactor,
         )
+    elif provider_name == "apinex":
+        api_key = active_settings.APINEX_API_KEY or active_settings.OPENAI_API_KEY
+        assert api_key is not None
+        llm_provider = OpenAIProvider(
+            api_key=api_key,
+            model=active_settings.effective_llm_model,
+            base_url=active_settings.APINEX_BASE_URL or "https://api.apinex.bond/v1",
+            redactor=redactor,
+        )
+    elif provider_name == "groq":
+        api_key = active_settings.GROQ_API_KEY or active_settings.OPENAI_API_KEY
+        assert api_key is not None
+        llm_provider = OpenAIProvider(
+            api_key=api_key,
+            model=active_settings.effective_llm_model,
+            base_url=active_settings.GROQ_BASE_URL or "https://api.groq.com/openai/v1",
+            redactor=redactor,
+        )
     elif provider_name == "scripted":
         # Dynamic import ensures test_support is never imported in production builds (Spec §7)
         from backend.test_support.scripted_llm import ScriptedLLMProvider
