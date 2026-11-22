@@ -1,8 +1,7 @@
-# E2E Execution Attempts Log
+# E2E Attempt Log
 
-This document records the execution history of End-to-End (E2E) testing attempts for the Cloud-Native AI Coding Harness across both real-LLM and scripted replay modes.
-
-## Real-LLM and Scripted Attempt History
-
-| Attempt # | Timestamp (UTC) | Mode | Provider | Model | Duration (s) | Boot (ms) | Patch Valid | Tests Pass | Status | Failure Details |
-|---|---|---|---|---|---|---|---|---|---|---|
+## Attempt 1 — scripted mode
+Date: 2026-11-22
+Mode: --scripted (docker-compose.test.yml)
+Result: Pending Docker Desktop availability
+Notes: Docker Desktop was not running during development. Scripted e2e will be verified when Docker becomes available.

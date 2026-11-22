@@ -34,6 +34,37 @@ An autonomous, full-stack AI coding harness running in isolated, ephemeral Docke
 
 ## 2. Architecture & Design Principles
 
+### Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Client Browser                           │
+│            React 18 + Vite SPA (port 3000)                     │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ HTTP/WebSocket (nginx proxy → :8000)
+┌──────────────────────────▼──────────────────────────────────────┐
+│                   FastAPI Backend (port 8000)                   │
+│  api/        ──▶  application/  ──▶  domain/ (interfaces)      │
+│                                      ▲                          │
+│  infrastructure/ (adapters) ─────────┘                         │
+│  ├── auth/      (DevAuthProvider, ClerkAuthProvider)            │
+│  ├── llm/       (AnthropicProvider, OpenAIProvider)             │
+│  ├── storage/   (S3ObjectStorage via boto3)                     │
+│  ├── db/        (PostgresRunRepository via SQLAlchemy async)    │
+│  └── sandbox/   (DockerSandboxProvider)                         │
+└──────┬───────────────────┬────────────────────────────────────┬─┘
+       │                   │                                    │
+┌──────▼──────┐  ┌─────────▼─────────┐  ┌──────────────────────▼──┐
+│  Postgres   │  │      MinIO        │  │  docker-socket-proxy    │
+│  (port 5432)│  │  (ports 9000/9001)│  │  (port 2375)            │
+└─────────────┘  └───────────────────┘  └──────────┬──────────────┘
+                                                    │ Docker API
+                                         ┌──────────▼──────────────┐
+                                         │  Sandbox Containers     │
+                                         │  (network=none, tmpfs)  │
+                                         └─────────────────────────┘
+```
+
 ### Inward Dependency Flow
 Dependencies point strictly inward:
 `api/` → `application/` → `domain/` ← `infrastructure/`
@@ -111,9 +142,64 @@ To add a new provider:
 2. Register the provider in `backend/app/bootstrap.py`.
 3. Zero edits required in the agent loop or application layer.
 
+### WebSocket Protocol
+
+Connect: `WS /api/runs/{id}/stream?after=<seq>&token=<jwt>`
+
+Each message is a JSON event:
+```json
+{"seq": 42, "ts": "2024-01-01T00:00:00Z", "type": "terminal_chunk", "payload": {...}}
+```
+
+Event types: `reasoning`, `plan`, `decision`, `tool_call`, `tool_result`, `terminal_chunk`, `status_change`, `guidance`, `truncation_marker`
+
+Close codes:
+- `4401` — Unauthenticated (no/invalid token)
+- `4404` — Run not found (cross-user or non-existent)
+
 ---
 
-## 5. Security & Isolation
+## 5. Environment Variables Reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `HARNESS_ENV` | `development` | `development`, `test`, or `production` |
+| `LLM_PROVIDER` | _(blank = infer)_ | `anthropic`, `openai`, or `scripted` |
+| `LLM_MODEL` | _(provider default)_ | Override model (e.g. `claude-3-7-sonnet-20250219`) |
+| `ANTHROPIC_API_KEY` | | Anthropic API key |
+| `OPENAI_API_KEY` | | OpenAI API key |
+| `OPENAI_BASE_URL` | | Override OpenAI base URL |
+| `AUTH_PROVIDER` | `dev` | `dev` or `clerk` |
+| `CLERK_JWKS_URL` | | Clerk JWKS endpoint |
+| `CLERK_ISSUER` | | Clerk JWT issuer |
+| `DATABASE_URL` | | `postgresql+asyncpg://...` |
+| `S3_ENDPOINT_URL` | | S3/MinIO endpoint |
+| `S3_PUBLIC_ENDPOINT_URL` | | Public S3 endpoint for presigned URLs |
+| `S3_BUCKET` | | S3 bucket name |
+| `S3_ACCESS_KEY` | | S3 access key |
+| `S3_SECRET_KEY` | | S3 secret key |
+| `S3_REGION` | | S3 region |
+| `DOCKER_HOST` | `tcp://docker-proxy:2375` | Docker socket proxy URL |
+| `SANDBOX_IMAGE` | `harness-sandbox:latest` | Sandbox container image |
+| `SANDBOX_NETWORK_MODE` | `none` | Container network mode |
+| `SANDBOX_CPU_LIMIT` | `1.0` | CPU limit (cores) |
+| `SANDBOX_MEM_LIMIT` | `1g` | Memory limit |
+| `SANDBOX_PIDS_LIMIT` | `256` | PID limit |
+| `SANDBOX_WARM_POOL_SIZE` | `2` | Idle warm containers |
+| `SANDBOX_WORKSPACE_SIZE` | `384m` | /workspace tmpfs size |
+| `SANDBOX_TMP_SIZE` | `128m` | /tmp tmpfs size |
+| `MAX_CONCURRENT_RUNS` | `4` | Max simultaneous runs |
+| `AGENT_MAX_STEPS` | `40` | Max agent steps per run |
+| `AGENT_MAX_TOKENS` | `200000` | Max total tokens per run |
+| `AGENT_MAX_CONSECUTIVE_FAILURES` | `5` | Max consecutive failures before FAILED |
+| `COMMAND_TIMEOUT_SECONDS` | `120` | Per-command timeout |
+| `MAX_UPLOAD_MB` | `50` | Max archive upload size |
+| `MAX_OUTPUT_BYTES_PER_RUN` | `5242880` | Max terminal output per run (5 MB) |
+| `CORS_ORIGINS` | | Comma-separated allowed CORS origins |
+
+---
+
+## 6. Security & Isolation
 
 ### Why `/var/run/docker.sock` is NOT Mounted into Backend
 Mounting the host Docker socket into the backend container gives the backend unrestricted root control over the host Docker daemon. Instead, the backend communicates with Docker exclusively through `tecnativa/docker-socket-proxy`, which filters API endpoints and exposes only containers, exec, and image inspect.
@@ -128,7 +214,7 @@ Mounting the host Docker socket into the backend container gives the backend unr
 
 ---
 
-## 6. Running Tests
+## 7. Running Tests
 
 ### Backend Test Suite
 ```bash
@@ -162,7 +248,7 @@ python scripts/e2e.py
 
 ---
 
-## 7. Troubleshooting (Docker Desktop with WSL2)
+## 8. Troubleshooting (Docker Desktop / WSL2 / Windows)
 
 - **Pipe / Socket Connection Errors**:
   Ensure Docker Desktop is running and WSL2 integration is enabled in Docker Desktop settings (*Settings > Resources > WSL Integration*).
