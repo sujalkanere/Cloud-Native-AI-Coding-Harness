@@ -1,11 +1,13 @@
 """
 Scripted LLM Provider for Cloud-Native AI Coding Harness.
-Implements ILLMProvider replaying scripted_run.json fixtures.
+Implements ILLMProvider replaying scripted_run.json fixtures or in-memory steps.
 Lives strictly in test_support package and is refused in production.
 Adheres strictly to Spec §3.2, §7, §9.1.
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 from pathlib import Path
 from typing import Any
@@ -16,22 +18,35 @@ from backend.app.domain.models import LLMMessage, LLMResponse, ToolCall, ToolDef
 
 class ScriptedLLMProvider(ILLMProvider):
     """
-    Test provider replaying pre-recorded LLM steps from a JSON script.
-    Used for reproducible integration and E2E testing without real LLM API calls.
+    Test provider replaying pre-recorded LLM steps from a JSON script or in-memory list.
+    Used for reproducible integration, unit, and orchestration testing without real LLM API calls.
     """
 
-    def __init__(self, script_path: str | Path | None = None) -> None:
-        if script_path is None:
-            # Default to samples/buggy-calculator/scripted_run.json
-            repo_root = Path(__file__).resolve().parents[2]
-            script_path = repo_root / "samples" / "buggy-calculator" / "scripted_run.json"
+    def __init__(
+        self,
+        script_path: str | Path | None = None,
+        steps: list[dict[str, Any]] | None = None,
+        default_tokens: int | None = None,
+    ) -> None:
+        self.default_tokens = default_tokens
+        self.call_history: list[dict[str, Any]] = []
 
-        self.script_path = Path(script_path)
-        if not self.script_path.is_file():
-            raise FileNotFoundError(f"Scripted run file not found at {self.script_path}")
+        if steps is not None:
+            self.script_path: Path | None = None
+            self._steps: list[dict[str, Any]] = list(steps)
+        else:
+            if script_path is None:
+                # Default to samples/buggy-calculator/scripted_run.json
+                repo_root = Path(__file__).resolve().parents[2]
+                script_path = repo_root / "samples" / "buggy-calculator" / "scripted_run.json"
 
-        data = json.loads(self.script_path.read_text(encoding="utf-8"))
-        self._steps: list[dict[str, Any]] = data.get("steps", [])
+            self.script_path = Path(script_path)
+            if not self.script_path.is_file():
+                raise FileNotFoundError(f"Scripted run file not found at {self.script_path}")
+
+            data = json.loads(self.script_path.read_text(encoding="utf-8"))
+            self._steps = data.get("steps", [])
+
         self._step_index: int = 0
 
     @property
@@ -43,15 +58,22 @@ class ScriptedLLMProvider(ILLMProvider):
         return self._step_index
 
     def reset(self) -> None:
-        """Resets replay step pointer to the beginning."""
+        """Resets replay step pointer and call history."""
         self._step_index = 0
+        self.call_history.clear()
 
     async def complete(
         self,
         messages: list[LLMMessage],
         tools: list[ToolDefinition],
     ) -> LLMResponse:
-        """Replays the next sequential step from the scripted fixture."""
+        """Replays the next sequential step from the scripted fixture or in-memory steps."""
+        self.call_history.append({
+            "messages": list(messages),
+            "tools": list(tools),
+            "step_index": self._step_index,
+        })
+
         if self._step_index >= len(self._steps):
             raise RuntimeError(
                 f"Scripted run steps exhausted (executed {self._step_index} of {len(self._steps)} steps)"
@@ -59,6 +81,17 @@ class ScriptedLLMProvider(ILLMProvider):
 
         step = self._steps[self._step_index]
         self._step_index += 1
+
+        # Optional delay or callback before returning response (e.g. for pause-during-call testing)
+        delay = step.get("delay")
+        if delay and isinstance(delay, (int, float)):
+            await asyncio.sleep(delay)
+
+        callback = step.get("callback")
+        if callback and callable(callback):
+            res = callback()
+            if inspect.iscoroutine(res):
+                await res
 
         thought = step.get("thought", "")
         tool_calls_data = step.get("tool_calls", [])
@@ -81,10 +114,23 @@ class ScriptedLLMProvider(ILLMProvider):
             for tc in tool_calls_data
         ]
 
-        # Simulated deterministic token counts
-        prompt_tokens = 100 + (self._step_index * 20)
-        completion_tokens = 50 + len(thought)
-        total_tokens = prompt_tokens + completion_tokens
+        # Configurable token counts
+        if step.get("total_tokens") is not None:
+            total_tokens = int(step["total_tokens"])
+            prompt_tokens = int(step.get("prompt_tokens", total_tokens // 2))
+            completion_tokens = int(step.get("completion_tokens", total_tokens - prompt_tokens))
+        elif step.get("tokens") is not None:
+            total_tokens = int(step["tokens"])
+            prompt_tokens = total_tokens // 2
+            completion_tokens = total_tokens - prompt_tokens
+        elif self.default_tokens is not None:
+            total_tokens = self.default_tokens
+            prompt_tokens = total_tokens // 2
+            completion_tokens = total_tokens - prompt_tokens
+        else:
+            prompt_tokens = 100 + (self._step_index * 20)
+            completion_tokens = 50 + len(thought)
+            total_tokens = prompt_tokens + completion_tokens
 
         return LLMResponse(
             content=thought,

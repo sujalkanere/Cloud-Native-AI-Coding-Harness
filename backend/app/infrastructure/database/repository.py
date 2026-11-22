@@ -112,6 +112,7 @@ class PostgresRunRepository(IRunRepository):
         status: RunStatus,
         error_reason: str | None = None,
         is_pausing: bool | None = None,
+        baseline_sha: str | None = None,
     ) -> Run:
         async with self._session_factory() as session:
             async with session.begin():
@@ -126,6 +127,8 @@ class PostgresRunRepository(IRunRepository):
                     model.error_reason = error_reason
                 if is_pausing is not None:
                     model.is_pausing = is_pausing
+                if baseline_sha is not None:
+                    model.baseline_sha = baseline_sha
                 model.updated_at = datetime.now(UTC)
 
             await session.refresh(model)

@@ -158,8 +158,9 @@ class IRunRepository(Protocol):
         status: RunStatus,
         error_reason: str | None = None,
         is_pausing: bool | None = None,
+        baseline_sha: str | None = None,
     ) -> Run:
-        """Updates lifecycle status, error reason, or is_pausing flag atomically."""
+        """Updates lifecycle status, error reason, is_pausing flag, or baseline_sha atomically."""
         ...
 
     async def append_event(self, run_id: str, event_data: dict[str, Any]) -> RunEvent:
