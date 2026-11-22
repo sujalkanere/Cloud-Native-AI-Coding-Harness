@@ -165,8 +165,20 @@ export function SessionManager({ onSelectRun }: SessionManagerProps) {
               </h1>
             </div>
             <p className="mt-1 text-sm text-slate-400">
-              Autonomous, isolated sandboxed coding agent orchestrator
+              Autonomous, isolated sandboxed coding agent orchestrator — watch & steer runs live
             </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+              <span className="inline-flex items-center rounded-full bg-emerald-950/80 border border-emerald-800 px-2.5 py-0.5 text-emerald-300 font-medium">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse" />
+                Harness Engine Ready
+              </span>
+              <span className="inline-flex items-center rounded-full bg-blue-950/80 border border-blue-800 px-2.5 py-0.5 text-blue-300">
+                ⚡ LLM: GROQ (openai/gpt-oss-120b)
+              </span>
+              <span className="inline-flex items-center rounded-full bg-purple-950/80 border border-purple-800 px-2.5 py-0.5 text-purple-300">
+                📦 Ephemeral Sandbox
+              </span>
+            </div>
           </div>
 
           <Button
@@ -234,14 +246,19 @@ export function SessionManager({ onSelectRun }: SessionManagerProps) {
               {/* Source Inputs */}
               {sourceType === "git" ? (
                 <div className="space-y-1.5">
-                  <label className="text-xs text-slate-400">
-                    Repository URL (HTTPS git endpoint)
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-slate-400">
+                      Repository URL (HTTPS git endpoint)
+                    </label>
+                    <span className="text-[11px] text-slate-500">
+                      Optional — leave blank for scratch workspace
+                    </span>
+                  </div>
                   <Input
                     type="url"
                     value={repoUrl}
                     onChange={(e) => setRepoUrl(e.target.value)}
-                    placeholder="https://github.com/owner/repository.git"
+                    placeholder="https://github.com/owner/repository.git (or leave blank)"
                     className="bg-slate-950 border-slate-700"
                   />
                 </div>
@@ -277,13 +294,51 @@ export function SessionManager({ onSelectRun }: SessionManagerProps) {
 
               {/* Task Description */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-300">
-                  Task Objective <span className="text-rose-400">*</span>
-                </label>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5">
+                  <label className="text-xs font-semibold text-slate-300">
+                    Task Objective <span className="text-rose-400">*</span>
+                  </label>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] text-slate-500">Quick start:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTask("Build a complete, playable Hangman game in python with clean code structure and write unit tests in test_hangman.py that pass.");
+                        setVerification("required");
+                        setRepoUrl("");
+                      }}
+                      className="rounded bg-slate-800 hover:bg-slate-700 px-2 py-0.5 text-[11px] text-blue-300 transition"
+                    >
+                      🎮 Hangman (with tests)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTask("Make me a hangman game in python");
+                        setVerification("none");
+                        setRepoUrl("");
+                      }}
+                      className="rounded bg-slate-800 hover:bg-slate-700 px-2 py-0.5 text-[11px] text-emerald-300 transition"
+                    >
+                      ⚡ Hangman (no tests)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTask("Implement a scientific calculator module in calculator.py and comprehensive unit tests in test_calculator.py that verify all functions pass.");
+                        setVerification("required");
+                        setRepoUrl("");
+                      }}
+                      className="rounded bg-slate-800 hover:bg-slate-700 px-2 py-0.5 text-[11px] text-purple-300 transition"
+                    >
+                      🧮 Calculator + Tests
+                    </button>
+                  </div>
+                </div>
                 <Textarea
                   value={task}
                   onChange={(e) => setTask(e.target.value)}
-                  placeholder="Describe what the agent should implement or fix (e.g. 'Fix the divide by zero handling in calculator.py and ensure pytest passes')..."
+                  placeholder="Describe what the agent should implement or fix (e.g. 'Make me a hangman game in python' or 'Fix divide-by-zero bug')..."
                   rows={3}
                   className="bg-slate-950 border-slate-700 text-sm"
                 />

@@ -17,8 +17,8 @@ from __future__ import annotations
 DEFAULT_MODELS: dict[str, str] = {
     "anthropic": "claude-3-5-sonnet-20241022",
     "openai": "gpt-4o",
-    "apinex": "gpt-4o",
-    "groq": "llama-3.3-70b-versatile",
+    "apinex": "free/qwen-3.8-max",
+    "groq": "openai/gpt-oss-120b",
     "scripted": "mock-scripted-model",
 }
 

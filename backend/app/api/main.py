@@ -66,17 +66,19 @@ def create_app(
         # 3. Automatically execute Alembic migrations on startup (Spec §7, Feature 49)
         if not skip_migrations:
             try:
-                if "sqlite" in active_settings.DATABASE_URL:
-                    logger.info("Initializing SQLite database schema...")
+                logger.info("Executing startup Alembic migrations...")
+                await run_migrations(active_settings.DATABASE_URL)
+                logger.info("Startup Alembic migrations completed successfully.")
+                if (
+                    "sqlite" in active_settings.DATABASE_URL
+                    and app_container.session_factory is not None
+                    and hasattr(app_container.session_factory, "kw")
+                    and "bind" in app_container.session_factory.kw
+                ):
                     from backend.app.infrastructure.database.models import Base
 
                     async with app_container.session_factory.kw["bind"].begin() as conn:
                         await conn.run_sync(Base.metadata.create_all)
-                    logger.info("SQLite schema initialized successfully.")
-                else:
-                    logger.info("Executing startup Alembic migrations...")
-                    await run_migrations(active_settings.DATABASE_URL)
-                    logger.info("Startup Alembic migrations completed successfully.")
             except (OSError, RuntimeError, ValueError, KeyError, AttributeError, SQLAlchemyError) as exc:
                 logger.warning("Startup database initialization skipped or failed: %s", exc)
 

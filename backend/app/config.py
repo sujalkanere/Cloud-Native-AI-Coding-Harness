@@ -5,8 +5,9 @@ and fail-fast validators adhering strictly to Spec §3.6, §7.
 """
 from __future__ import annotations
 
+import os
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
 from backend.app.application.headroom import validate_tmpfs_headroom
 from backend.app.application.provider_selection import resolve_llm_provider
@@ -23,6 +24,11 @@ class Settings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
     )
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        if "PYTEST_CURRENT_TEST" in os.environ and "_env_file" not in kwargs:
+            kwargs["_env_file"] = None
+        super().__init__(*args, **kwargs)
 
     # 1. Environment Mode
     HARNESS_ENV: Literal["development", "test", "production"] = "development"
@@ -51,6 +57,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/harness"
 
     # 5. Object Storage Configuration
+    STORAGE_PROVIDER: Literal["s3", "memory"] = "s3"
     S3_ENDPOINT_URL: str = "http://minio:9000"
     S3_PUBLIC_ENDPOINT_URL: str = "http://127.0.0.1:9000"
     S3_BUCKET: str = "harness-artifacts"
@@ -59,6 +66,7 @@ class Settings(BaseSettings):
     S3_REGION: str = "us-east-1"
 
     # 6. Docker Proxy Connection
+    SANDBOX_PROVIDER: Literal["docker", "fake"] = "docker"
     DOCKER_HOST: str = "tcp://docker-proxy:2375"
 
     # 7. Sandbox Container Specification & Hardening
@@ -94,14 +102,18 @@ class Settings(BaseSettings):
         )
 
         # 2. Environment integrity guards (Spec §3.6, §7)
-        if self.HARNESS_ENV == "production" and self.AUTH_PROVIDER == "dev":
-            raise ValueError("AUTH_PROVIDER='dev' is refused in production mode (HARNESS_ENV=production).")
+        if self.HARNESS_ENV == "production":
+            if self.AUTH_PROVIDER == "dev":
+                raise ValueError("AUTH_PROVIDER='dev' is refused in production mode (HARNESS_ENV=production).")
+            if self.SANDBOX_PROVIDER == "fake":
+                raise ValueError("SANDBOX_PROVIDER='fake' is refused in production mode (HARNESS_ENV=production).")
+            if self.STORAGE_PROVIDER == "memory":
+                raise ValueError("STORAGE_PROVIDER='memory' is refused in production mode (HARNESS_ENV=production).")
 
         if self.AUTH_PROVIDER == "clerk" and (not self.CLERK_JWKS_URL or not self.CLERK_ISSUER):
             raise ValueError(
                 "CLERK_JWKS_URL and CLERK_ISSUER must be configured when AUTH_PROVIDER='clerk'."
             )
-
 
         # 3. Provider selection logic (Spec §3.6)
         provider, model = resolve_llm_provider(

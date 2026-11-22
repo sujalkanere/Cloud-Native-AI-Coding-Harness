@@ -363,9 +363,9 @@ async def get_run_diff(
     # 1. Try computing live diff from active sandbox if running
     if container.concurrency_manager is not None:
         handle = container.concurrency_manager.get_handle(id)
-        if handle and handle.control._sandbox and run.baseline_sha:
+        if handle and getattr(handle.control, "sandbox", None) and run.baseline_sha:
             try:
-                diff_bytes = await compute_diff(handle.control._sandbox, run.baseline_sha)
+                diff_bytes = await compute_diff(handle.control.sandbox, run.baseline_sha)
             except (OSError, RuntimeError, ValueError, KeyError, AttributeError) as exc:
                 logger.debug("Live diff computation error: %s", exc)
 

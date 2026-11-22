@@ -117,15 +117,21 @@ def bootstrap(settings: Settings | None = None) -> AppContainer:
     else:
         raise ValueError(f"Unsupported LLM provider: {provider_name}")
 
-    # 4. S3 Object Storage Adapter
-    storage = S3ObjectStorage(
-        endpoint_url=active_settings.S3_ENDPOINT_URL,
-        public_endpoint_url=active_settings.S3_PUBLIC_ENDPOINT_URL,
-        bucket=active_settings.S3_BUCKET,
-        access_key=active_settings.S3_ACCESS_KEY,
-        secret_key=active_settings.S3_SECRET_KEY,
-        region=active_settings.S3_REGION,
-    )
+    # 4. Object Storage Adapter
+    storage: IObjectStorage
+    if active_settings.STORAGE_PROVIDER == "memory":
+        from backend.app.infrastructure.storage.memory import InMemoryObjectStorage
+
+        storage = InMemoryObjectStorage()
+    else:
+        storage = S3ObjectStorage(
+            endpoint_url=active_settings.S3_ENDPOINT_URL,
+            public_endpoint_url=active_settings.S3_PUBLIC_ENDPOINT_URL,
+            bucket=active_settings.S3_BUCKET,
+            access_key=active_settings.S3_ACCESS_KEY,
+            secret_key=active_settings.S3_SECRET_KEY,
+            region=active_settings.S3_REGION,
+        )
 
     # 5. Database Connection & Postgres Run Repository
     engine = create_async_engine(
@@ -140,21 +146,27 @@ def bootstrap(settings: Settings | None = None) -> AppContainer:
     )
     run_repository = PostgresRunRepository(session_factory=session_factory)
 
-    # 6. Docker Sandbox Provider
-    default_spec = SandboxSpec(
-        image=active_settings.SANDBOX_IMAGE,
-        cpu_limit=active_settings.SANDBOX_CPU_LIMIT,
-        mem_limit=active_settings.SANDBOX_MEM_LIMIT,
-        pids_limit=active_settings.SANDBOX_PIDS_LIMIT,
-        workspace_size=active_settings.SANDBOX_WORKSPACE_SIZE,
-        tmp_size=active_settings.SANDBOX_TMP_SIZE,
-        network_mode=active_settings.SANDBOX_NETWORK_MODE,
-    )
-    sandbox_provider = DockerSandboxProvider(
-        docker_host=active_settings.DOCKER_HOST,
-        warm_pool_size=active_settings.SANDBOX_WARM_POOL_SIZE,
-        default_spec=default_spec,
-    )
+    # 6. Sandbox Provider
+    sandbox_provider: ISandboxProvider
+    if active_settings.SANDBOX_PROVIDER == "fake":
+        from backend.test_support.fake_sandbox import FakeSandboxProvider
+
+        sandbox_provider = FakeSandboxProvider()
+    else:
+        default_spec = SandboxSpec(
+            image=active_settings.SANDBOX_IMAGE,
+            cpu_limit=active_settings.SANDBOX_CPU_LIMIT,
+            mem_limit=active_settings.SANDBOX_MEM_LIMIT,
+            pids_limit=active_settings.SANDBOX_PIDS_LIMIT,
+            workspace_size=active_settings.SANDBOX_WORKSPACE_SIZE,
+            tmp_size=active_settings.SANDBOX_TMP_SIZE,
+            network_mode=active_settings.SANDBOX_NETWORK_MODE,
+        )
+        sandbox_provider = DockerSandboxProvider(
+            docker_host=active_settings.DOCKER_HOST,
+            warm_pool_size=active_settings.SANDBOX_WARM_POOL_SIZE,
+            default_spec=default_spec,
+        )
 
     concurrency_manager = RunConcurrencyManager(
         repository=run_repository,

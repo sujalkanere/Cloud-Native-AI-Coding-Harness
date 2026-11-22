@@ -168,6 +168,9 @@ class OpenAIProvider(ILLMProvider):
 
         msg = choices[0].get("message", {})
         raw_content = msg.get("content")
+        reasoning = msg.get("reasoning")
+        if not raw_content and reasoning:
+            raw_content = f"{reasoning}"
         content = self._redact_text(raw_content)
 
         tool_calls: list[ToolCall] = []

@@ -293,18 +293,18 @@ class AgentRunner:
             except (ValidationError, ValueError, RuntimeError):
                 self.settings = Settings(HARNESS_ENV="test", LLM_PROVIDER="scripted")
 
-        self.state_machine = RunStateMachine(current_status=run.status, is_pausing=run.is_pausing)
-        if control is None:
-            self.control = AgentControl(
+        if control is not None and control.state_machine is not None:
+            self.state_machine = control.state_machine
+            self.control = control
+            self.control.attach_sandbox(sandbox)
+        else:
+            self.state_machine = RunStateMachine(current_status=run.status, is_pausing=run.is_pausing)
+            self.control = control or AgentControl(
                 run_id=run.id,
                 repository=repository,
                 state_machine=self.state_machine,
                 sandbox=sandbox,
             )
-        else:
-            self.control = control
-            self.control.attach_state_machine(self.state_machine)
-            self.control.attach_sandbox(sandbox)
 
         if coalescer is not None:
             self.coalescer = coalescer
