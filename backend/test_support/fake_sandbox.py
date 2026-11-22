@@ -92,6 +92,50 @@ class FakeSandbox(ISandboxEnvironment):
 
         return resolved
 
+    def _validate_command_safety(self, command: str) -> None:
+        """
+        Validates that a command does not attempt to reference paths or files outside the sandbox.
+        Strictly forbids directory traversal (..) and absolute host paths.
+        """
+        import re
+        if not self._workspace:
+            raise RuntimeError("Sandbox environment has not been started.")
+
+        workspace_str = str(self._workspace.resolve()).lower()
+
+        # Reject directory traversal attempts
+        traversal_patterns = [
+            r"\bcd\s+\.\.",
+            r"\bpushd\s+\.\.",
+            r"\.\.[\\/]",
+            r"[\\/]\.\.",
+        ]
+        for pattern in traversal_patterns:
+            if re.search(pattern, command, re.IGNORECASE):
+                raise PathTraversalError("Security violation: Directory traversal (..) is strictly prohibited in sandbox.")
+
+        # Reject absolute drive letter paths outside workspace (e.g. C:\..., D:\...)
+        drive_path_matches = re.findall(r"([a-zA-Z]:[\\/][^\s\"'<>|&;]+)", command)
+        for p in drive_path_matches:
+            try:
+                resolved_p = str(Path(p).resolve()).lower()
+                if not resolved_p.startswith(workspace_str):
+                    raise PathTraversalError(f"Security violation: Access to host path '{p}' outside sandbox workspace is denied.")
+            except Exception as exc:
+                raise PathTraversalError(f"Security violation: Invalid host path '{p}'.") from exc
+
+        # Reject destructive shell deletion targeting outside or root
+        destructive_patterns = [
+            r"\bdel\b(?:\s+/[a-zA-Z]+)*\s+[a-zA-Z]:",
+            r"\brmdir\b(?:\s+/[a-zA-Z]+)*\s+[a-zA-Z]:",
+            r"\brm\s+-[rf]*\s+/[a-zA-Z]",
+            r"\bformat\b",
+            r"\bdiskpart\b",
+        ]
+        for dp in destructive_patterns:
+            if re.search(dp, command, re.IGNORECASE):
+                raise PathTraversalError("Security violation: Host-level destructive command prohibited.")
+
     # ================= IFileAccess =================
 
     async def read_file(self, path: str) -> str:
@@ -149,6 +193,15 @@ class FakeSandbox(ISandboxEnvironment):
             await self.start()
 
         target_cwd = self._resolve_workspace_path(cwd)
+
+        # Enforce strict sandbox boundary: reject commands that escape workspace
+        try:
+            self._validate_command_safety(command)
+        except PathTraversalError as exc:
+            yield ExecEvent(stream="stderr", data=f"Error: {exc}\n")
+            yield ExecEvent(stream="exit", exit_code=1)
+            self._emit_log("stderr", f"Security violation blocked: {exc}\n")
+            return
 
         # On Windows, normalize python execution to active interpreter
         exec_cmd = command
