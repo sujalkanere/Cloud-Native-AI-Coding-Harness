@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import sys
 import tempfile
 import uuid
 from collections.abc import AsyncIterator
@@ -149,16 +150,23 @@ class FakeSandbox(ISandboxEnvironment):
 
         target_cwd = self._resolve_workspace_path(cwd)
 
+        # On Windows, normalize python execution to active interpreter
+        exec_cmd = command
+        if sys.platform == "win32" and (exec_cmd.startswith("python ") or exec_cmd == "python"):
+            exec_cmd = f'"{sys.executable}"' + exec_cmd[6:]
+
         # Launch process
         proc = await asyncio.create_subprocess_shell(
-            command,
+            exec_cmd,
             cwd=str(target_cwd),
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env={
                 **os.environ,
                 "HOME": str(self._workspace),
                 "TMPDIR": str(self._workspace),
+                "PYTHONUNBUFFERED": "1",
                 "PYTHONDONTWRITEBYTECODE": "1",
             },
         )
@@ -168,10 +176,10 @@ class FakeSandbox(ISandboxEnvironment):
 
         async def _stream_reader(stream: asyncio.StreamReader, stream_name: str) -> None:
             while True:
-                line = await stream.readline()
-                if not line:
+                chunk = await stream.read(4096)
+                if not chunk:
                     break
-                text = line.decode("utf-8", errors="replace")
+                text = chunk.decode("utf-8", errors="replace")
                 event = ExecEvent(stream=stream_name, data=text)
                 await queue.put(event)
                 self._emit_log(stream_name, text)

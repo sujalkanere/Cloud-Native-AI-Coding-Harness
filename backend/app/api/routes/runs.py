@@ -398,7 +398,7 @@ async def list_run_files(
     if run is None:
         raise EntityNotFoundError(f"Run '{id}' not found")
 
-    file_paths: list[str] = []
+    file_paths: set[str] = set()
 
     # 1. Try listing files from live sandbox
     if container.concurrency_manager is not None:
@@ -406,14 +406,32 @@ async def list_run_files(
         if handle and getattr(handle.control, "sandbox", None):
             try:
                 entries = await handle.control.sandbox.list_dir(".")
-                file_paths = [e for e in entries if not e.startswith(".git")]
+                for e in entries:
+                    if not e.startswith(".git"):
+                        file_paths.add(e)
             except (OSError, RuntimeError, ValueError, KeyError, AttributeError):
                 pass
 
-    # 2. Fall back to files parsed from diff
+    # 2. Replay write_file tool calls from events
+    events = await container.run_repository.list_events(id)
+    for ev in events:
+        if ev.type == "tool_call" and ev.payload.get("name") == "write_file":
+            args = ev.payload.get("arguments", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except Exception:
+                    args = {}
+            p = args.get("path")
+            if p and not p.startswith(".git"):
+                file_paths.add(p)
+
+    # 3. Fall back to files parsed from diff
     if not file_paths:
         diffs = await get_run_diff(id=id, current_user=current_user, container=container)
-        file_paths = [d.path for d in diffs if d.status != "deleted" and not d.path.startswith(".git")]
+        for d in diffs:
+            if d.status != "deleted" and not d.path.startswith(".git"):
+                file_paths.add(d.path)
 
     return [{"path": p, "name": p.split("/")[-1]} for p in sorted(file_paths)]
 
@@ -430,19 +448,31 @@ async def get_run_file_content(
     if run is None:
         raise EntityNotFoundError(f"Run '{id}' not found")
 
-    content = ""
-
     # 1. Try reading from active sandbox
     if container.concurrency_manager is not None:
         handle = container.concurrency_manager.get_handle(id)
         if handle and getattr(handle.control, "sandbox", None):
             try:
                 content = await handle.control.sandbox.read_file(path)
-                return {"path": path, "content": content}
+                if content:
+                    return {"path": path, "content": content}
             except (OSError, RuntimeError, ValueError, KeyError, AttributeError):
                 pass
 
-    # 2. Fallback to extracting from diff patch if file was added
+    # 2. Check recorded write_file events in run repository
+    events = await container.run_repository.list_events(id)
+    for ev in reversed(events):
+        if ev.type == "tool_call" and ev.payload.get("name") == "write_file":
+            args = ev.payload.get("arguments", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except Exception:
+                    args = {}
+            if args.get("path") == path and args.get("content") is not None:
+                return {"path": path, "content": args.get("content", "")}
+
+    # 3. Fallback to extracting from diff patch if file was added
     diffs = await get_run_diff(id=id, current_user=current_user, container=container)
     for d in diffs:
         if d.path == path and d.diff_patch:
@@ -451,9 +481,10 @@ async def get_run_file_content(
                 if line.startswith("+") and not line.startswith("+++") or line.startswith(" "):
                     lines.append(line[1:])
             content = "\n".join(lines)
-            break
+            if content:
+                return {"path": path, "content": content}
 
-    return {"path": path, "content": content}
+    return {"path": path, "content": ""}
 
 
 @router.post("/{id}/execute", response_model=dict[str, Any])
@@ -489,7 +520,7 @@ async def execute_command_in_run(
             await container.run_repository.append_event(id, payload)
 
     if sandbox is not None:
-        async for ev in sandbox.run(body.command):
+        async for ev in sandbox.run(body.command, timeout=15.0):
             if ev.stream in ("stdout", "stderr"):
                 await _emit_chunk(ev.stream, ev.data)
             elif ev.stream == "exit" and ev.exit_code is not None:
@@ -518,11 +549,16 @@ async def execute_command_in_run(
                 except (OSError, RuntimeError, ValueError, KeyError, AttributeError):
                     pass
 
-            # Also replay all write_file events to guarantee files are physically present
+            # Replay all write_file events to guarantee files are physically present
             events = await container.run_repository.list_events(id)
             for ev in events:
                 if ev.type == "tool_call" and ev.payload.get("name") == "write_file":
                     args = ev.payload.get("arguments", {})
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except Exception:
+                            args = {}
                     p = args.get("path")
                     c = args.get("content")
                     if p and c is not None:
@@ -531,7 +567,7 @@ async def execute_command_in_run(
                         except (OSError, RuntimeError, ValueError, KeyError, AttributeError):
                             pass
 
-            async for ev in box.run(body.command):
+            async for ev in box.run(body.command, timeout=15.0):
                 if ev.stream in ("stdout", "stderr"):
                     await _emit_chunk(ev.stream, ev.data)
                 elif ev.stream == "exit" and ev.exit_code is not None:

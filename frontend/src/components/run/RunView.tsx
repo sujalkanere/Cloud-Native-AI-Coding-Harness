@@ -146,6 +146,11 @@ export function RunView({ runId, onBack }: RunViewProps) {
         const firstFile = fileList[0].path;
         setOpenTabs(["diff", firstFile]);
         setActiveTab(firstFile);
+        api.getFileContent(runId, firstFile).then((res) => {
+          if (res?.content !== undefined) {
+            setFileContents((prev) => ({ ...prev, [firstFile]: res.content }));
+          }
+        }).catch(() => {});
       }
     } catch {
       // ignore
@@ -161,6 +166,17 @@ export function RunView({ runId, onBack }: RunViewProps) {
     const interval = setInterval(refreshFiles, 3000);
     return () => clearInterval(interval);
   }, [refreshFiles]);
+
+  // Auto-fetch file content whenever activeTab changes
+  useEffect(() => {
+    if (activeTab && activeTab !== "diff" && fileContents[activeTab] === undefined) {
+      api.getFileContent(runId, activeTab).then((res) => {
+        if (res?.content !== undefined) {
+          setFileContents((prev) => ({ ...prev, [activeTab]: res.content }));
+        }
+      }).catch(() => {});
+    }
+  }, [activeTab, runId, fileContents]);
 
   // Fetch content when opening a tab
   const handleSelectFile = async (filePath: string) => {
@@ -257,10 +273,11 @@ export function RunView({ runId, onBack }: RunViewProps) {
     setBottomPanelExpanded(true);
 
     const ts = new Date().toISOString();
+    const curSeq = state.lastSeenSeq;
     dispatch({
       type: "PROCESS_EVENT",
       event: {
-        seq: Date.now(),
+        seq: curSeq + 1,
         ts,
         type: "terminal_output",
         payload: {
@@ -276,7 +293,7 @@ export function RunView({ runId, onBack }: RunViewProps) {
         dispatch({
           type: "PROCESS_EVENT",
           event: {
-            seq: Date.now() + 1,
+            seq: curSeq + 2,
             ts: new Date().toISOString(),
             type: "terminal_output",
             payload: {
@@ -289,7 +306,7 @@ export function RunView({ runId, onBack }: RunViewProps) {
         dispatch({
           type: "PROCESS_EVENT",
           event: {
-            seq: Date.now() + 1,
+            seq: curSeq + 2,
             ts: new Date().toISOString(),
             type: "terminal_output",
             payload: {
@@ -303,7 +320,7 @@ export function RunView({ runId, onBack }: RunViewProps) {
       dispatch({
         type: "PROCESS_EVENT",
         event: {
-          seq: Date.now() + 1,
+          seq: curSeq + 2,
           ts: new Date().toISOString(),
           type: "terminal_output",
           payload: {
@@ -538,7 +555,7 @@ export function RunView({ runId, onBack }: RunViewProps) {
               return (
                 <div
                   key={tab}
-                  onClick={() => setActiveTab(tab)}
+                  onClick={() => handleSelectFile(tab)}
                   className={`group flex h-full cursor-pointer items-center space-x-2 border-r border-slate-800/80 px-3 text-xs transition-colors ${
                     isActive
                       ? "bg-[#0b0f19] text-white font-medium border-t-2 border-t-blue-500"
