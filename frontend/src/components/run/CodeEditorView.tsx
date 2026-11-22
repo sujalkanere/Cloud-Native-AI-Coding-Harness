@@ -1,16 +1,20 @@
 import React, { useState } from "react";
-import { Copy, Check, FileCode } from "lucide-react";
+import { Copy, Check, FileCode, Play } from "lucide-react";
 
 export interface CodeEditorViewProps {
   filename: string;
   content: string;
   language?: string;
+  onRunFile?: (filename: string) => void;
+  isRunning?: boolean;
 }
 
 export const CodeEditorView: React.FC<CodeEditorViewProps> = ({
   filename,
   content,
   language = "python",
+  onRunFile,
+  isRunning = false,
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -57,23 +61,37 @@ export const CodeEditorView: React.FC<CodeEditorViewProps> = ({
           <span className="text-[11px] text-slate-500">{lines.length} lines</span>
         </div>
 
-        <button
-          onClick={handleCopy}
-          className="flex items-center space-x-1.5 rounded-full bg-slate-800 hover:bg-slate-700 px-3 py-1 text-[11px] text-slate-300 transition-colors"
-          title="Copy code"
-        >
-          {copied ? (
-            <>
-              <Check className="h-3 w-3 text-emerald-400" />
-              <span className="text-emerald-400 font-sans">Copied!</span>
-            </>
-          ) : (
-            <>
-              <Copy className="h-3 w-3" />
-              <span className="font-sans">Copy</span>
-            </>
+        <div className="flex items-center space-x-2">
+          {onRunFile && (
+            <button
+              onClick={() => onRunFile(filename)}
+              disabled={isRunning}
+              className="flex items-center space-x-1.5 rounded-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-3.5 py-1 text-[11px] font-bold text-white transition-all shadow-sm"
+              title={`Execute ${filename} in sandbox`}
+            >
+              <Play className="h-3 w-3 fill-white" />
+              <span className="font-sans">{isRunning ? "Running..." : "Run File"}</span>
+            </button>
           )}
-        </button>
+
+          <button
+            onClick={handleCopy}
+            className="flex items-center space-x-1.5 rounded-full bg-slate-800 hover:bg-slate-700 px-3 py-1 text-[11px] text-slate-300 transition-colors"
+            title="Copy code"
+          >
+            {copied ? (
+              <>
+                <Check className="h-3 w-3 text-emerald-400" />
+                <span className="text-emerald-400 font-sans">Copied!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="h-3 w-3" />
+                <span className="font-sans">Copy</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Editor Gutter and Lines */}

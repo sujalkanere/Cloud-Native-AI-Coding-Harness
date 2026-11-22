@@ -34,8 +34,8 @@ class OpenAIProvider(ILLMProvider):
         base_url: str | None = None,
         redactor: SecretRedactor | None = None,
         client: httpx.AsyncClient | None = None,
-        max_retries: int = 3,
-        base_delay: float = 0.5,
+        max_retries: int = 5,
+        base_delay: float = 1.0,
     ) -> None:
         self.api_key = api_key
         self.model = model
@@ -145,7 +145,12 @@ class OpenAIProvider(ILLMProvider):
                     raise
 
                 if attempt < self.max_retries:
-                    delay = self.base_delay * (2 ** attempt)
+                    resp_obj = getattr(exc, "response", None)
+                    retry_header = resp_obj.headers.get("retry-after") if resp_obj else None
+                    if retry_header and retry_header.isdigit():
+                        delay = float(retry_header) + 0.5
+                    else:
+                        delay = min(self.base_delay * (2 ** attempt), 10.0)
                     logger.warning(
                         "OpenAI request failed (%s). Retrying in %.2fs (attempt %d/%d)...",
                         exc,

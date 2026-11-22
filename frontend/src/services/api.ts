@@ -165,6 +165,16 @@ export const api = {
   },
 
   /**
+   * Executes a shell command inside the sandbox.
+   */
+  async executeCommand(id: string, command: string): Promise<{ command: string; exit_code: number; output: string }> {
+    return request<{ command: string; exit_code: number; output: string }>(`/runs/${id}/execute`, {
+      method: "POST",
+      body: JSON.stringify({ command }),
+    });
+  },
+
+  /**
    * Health probes.
    */
   async getHealthz(): Promise<HealthResponse> {

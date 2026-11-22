@@ -17,6 +17,7 @@ import {
   Pause,
   Square,
   Download,
+  RotateCcw,
 } from "lucide-react";
 import type { RunStatus, FileDiff } from "../../types/run";
 import { useRunEvents } from "../../hooks/useRunEvents";
@@ -55,6 +56,8 @@ export function RunView({ runId, onBack }: RunViewProps) {
   const [diffs, setDiffs] = useState<FileDiff[]>([]);
   const [guidanceText, setGuidanceText] = useState("");
   const [isSendingGuidance, setIsSendingGuidance] = useState(false);
+  const [isRunningFile, setIsRunningFile] = useState(false);
+  const [isRerunning, setIsRerunning] = useState(false);
 
   // Duration
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -248,6 +251,46 @@ export function RunView({ runId, onBack }: RunViewProps) {
     }
   };
 
+  const handleRunFile = async (filename: string) => {
+    let cmd = `python ${filename}`;
+    if (filename.endsWith(".rs")) cmd = "cargo run";
+    else if (filename.endsWith(".sh")) cmd = `bash ${filename}`;
+    else if (filename.endsWith(".js")) cmd = `node ${filename}`;
+
+    setIsRunningFile(true);
+    setBottomTab("terminal");
+    setBottomPanelExpanded(true);
+    try {
+      await api.executeCommand(runId, cmd);
+    } catch (err: any) {
+      console.error("Execute file error:", err);
+    } finally {
+      setIsRunningFile(false);
+    }
+  };
+
+  const handleRerunTask = async () => {
+    if (!run?.task) return;
+    try {
+      setIsRerunning(true);
+      const newRun = await api.createRun({
+        task: run.task,
+        repo_url: run.repo_url || undefined,
+        options: run.options,
+      });
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        url.searchParams.set("runId", newRun.id);
+        window.history.pushState({}, "", url.toString());
+      }
+      window.location.reload();
+    } catch (err: any) {
+      console.error("Rerun error:", err);
+    } finally {
+      setIsRerunning(false);
+    }
+  };
+
   const getStatusBadge = () => {
     switch (currentStatus) {
       case "QUEUED":
@@ -375,8 +418,20 @@ export function RunView({ runId, onBack }: RunViewProps) {
 
           {["SUCCEEDED", "FAILED", "TERMINATED"].includes(currentStatus) && (
             <button
+              onClick={handleRerunTask}
+              disabled={isRerunning}
+              className="flex items-center space-x-1.5 rounded-full bg-[#0064e0] hover:bg-[#0457cb] px-4 py-1.5 text-[11px] font-bold text-white transition-colors shadow-sm"
+              title="Start a new run with the same task"
+            >
+              <RotateCcw className={`h-3 w-3 ${isRerunning ? "animate-spin" : ""}`} />
+              <span>{isRerunning ? "Starting..." : "Re-run Task"}</span>
+            </button>
+          )}
+
+          {["SUCCEEDED", "FAILED", "TERMINATED"].includes(currentStatus) && (
+            <button
               onClick={() => handleDownloadArtifact("patch")}
-              className="flex items-center space-x-1 rounded-full bg-blue-600 hover:bg-blue-500 px-3 py-1 text-[11px] font-semibold text-white transition-colors"
+              className="flex items-center space-x-1 rounded-full bg-slate-800 hover:bg-slate-700 px-3 py-1 text-[11px] font-semibold text-white transition-colors"
               title="Download patch diff"
             >
               <Download className="h-3 w-3" />
@@ -462,6 +517,8 @@ export function RunView({ runId, onBack }: RunViewProps) {
               <CodeEditorView
                 filename={activeTab.split("/").pop() || activeTab}
                 content={fileContents[activeTab] || "# Loading file content..."}
+                onRunFile={handleRunFile}
+                isRunning={isRunningFile}
               />
             )}
           </div>

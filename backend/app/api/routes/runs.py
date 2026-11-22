@@ -23,7 +23,7 @@ import uuid
 from typing import Any, Literal
 
 from backend.app.api.middleware import get_container, get_current_user
-from backend.app.application.diff import compute_diff, parse_diff_files
+from backend.app.application.diff import _run_command_simple, compute_diff, parse_diff_files
 from backend.app.application.ssrf import validate_repo_url
 from backend.app.bootstrap import AppContainer
 from backend.app.domain.errors import EntityNotFoundError
@@ -34,6 +34,7 @@ from backend.app.domain.models import (
     RunEvent,
     RunOptions,
     RunStatus,
+    SandboxSpec,
 )
 from backend.app.infrastructure.storage.s3 import S3ObjectStorage
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -42,6 +43,10 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/runs", tags=["runs"])
+
+
+class ExecuteCommandRequest(BaseModel):
+    command: str
 
 
 class PauseRequest(BaseModel):
@@ -449,3 +454,80 @@ async def get_run_file_content(
             break
 
     return {"path": path, "content": content}
+
+
+@router.post("/{id}/execute", response_model=dict[str, Any])
+async def execute_command_in_run(
+    id: str,
+    body: ExecuteCommandRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    container: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    """
+    Executes a shell command inside the run sandbox (or throwaway workspace if terminated),
+    streaming output events to repository/terminal.
+    """
+    run = await container.run_repository.get(id, user_id=current_user.id)
+    if run is None:
+        raise EntityNotFoundError(f"Run '{id}' not found")
+
+    sandbox = None
+    if container.concurrency_manager is not None:
+        handle = container.concurrency_manager.get_handle(id)
+        if handle and getattr(handle.control, "sandbox", None):
+            sandbox = handle.control.sandbox
+
+    output_chunks: list[str] = []
+    exit_code = 0
+
+    if sandbox is not None:
+        async for ev in sandbox.run(body.command):
+            if ev.stream in ("stdout", "stderr"):
+                output_chunks.append(ev.data)
+                await container.run_repository.append_event(
+                    id,
+                    {"type": "terminal_output", "payload": {"stream": ev.stream, "data": ev.data}},
+                )
+            elif ev.stream == "exit" and ev.exit_code is not None:
+                exit_code = ev.exit_code
+    else:
+        # Acquire throwaway sandbox from provider to execute command on workspace
+        spec = SandboxSpec(network_mode="none")
+        box = await container.sandbox_provider.acquire(spec)
+        try:
+            await box.start()
+            if run.baseline_sha:
+                baseline_key = S3ObjectStorage.build_artifact_key(run.user_id, run.id, "baseline_snapshot.tar.gz")
+                try:
+                    tar_gz = await container.storage.get(baseline_key)
+                    if tar_gz:
+                        await box.upload_workspace(tar_gz)
+                except (OSError, RuntimeError, ValueError, KeyError, AttributeError):
+                    pass
+
+                patch_key = S3ObjectStorage.build_artifact_key(run.user_id, run.id, "patch.diff")
+                try:
+                    patch_bytes = await container.storage.get(patch_key)
+                    if patch_bytes:
+                        await box.write_file(".patch.diff", patch_bytes.decode("utf-8", errors="replace"))
+                        await _run_command_simple(box, "git apply .patch.diff")
+                except (OSError, RuntimeError, ValueError, KeyError, AttributeError):
+                    pass
+
+            async for ev in box.run(body.command):
+                if ev.stream in ("stdout", "stderr"):
+                    output_chunks.append(ev.data)
+                    await container.run_repository.append_event(
+                        id,
+                        {"type": "terminal_output", "payload": {"stream": ev.stream, "data": ev.data}},
+                    )
+                elif ev.stream == "exit" and ev.exit_code is not None:
+                    exit_code = ev.exit_code
+        finally:
+            await box.stop()
+
+    return {
+        "command": body.command,
+        "exit_code": exit_code,
+        "output": "".join(output_chunks),
+    }
