@@ -480,14 +480,18 @@ async def execute_command_in_run(
     output_chunks: list[str] = []
     exit_code = 0
 
+    async def _emit_chunk(stream: str, data: str) -> None:
+        output_chunks.append(data)
+        payload = {"type": "terminal_output", "payload": {"stream": stream, "data": data}}
+        if container.concurrency_manager is not None:
+            await container.concurrency_manager.publish_event(id, payload)
+        else:
+            await container.run_repository.append_event(id, payload)
+
     if sandbox is not None:
         async for ev in sandbox.run(body.command):
             if ev.stream in ("stdout", "stderr"):
-                output_chunks.append(ev.data)
-                await container.run_repository.append_event(
-                    id,
-                    {"type": "terminal_output", "payload": {"stream": ev.stream, "data": ev.data}},
-                )
+                await _emit_chunk(ev.stream, ev.data)
             elif ev.stream == "exit" and ev.exit_code is not None:
                 exit_code = ev.exit_code
     else:
@@ -514,13 +518,22 @@ async def execute_command_in_run(
                 except (OSError, RuntimeError, ValueError, KeyError, AttributeError):
                     pass
 
+            # Also replay all write_file events to guarantee files are physically present
+            events = await container.run_repository.list_events(id)
+            for ev in events:
+                if ev.type == "tool_call" and ev.payload.get("name") == "write_file":
+                    args = ev.payload.get("arguments", {})
+                    p = args.get("path")
+                    c = args.get("content")
+                    if p and c is not None:
+                        try:
+                            await box.write_file(p, c)
+                        except (OSError, RuntimeError, ValueError, KeyError, AttributeError):
+                            pass
+
             async for ev in box.run(body.command):
                 if ev.stream in ("stdout", "stderr"):
-                    output_chunks.append(ev.data)
-                    await container.run_repository.append_event(
-                        id,
-                        {"type": "terminal_output", "payload": {"stream": ev.stream, "data": ev.data}},
-                    )
+                    await _emit_chunk(ev.stream, ev.data)
                 elif ev.stream == "exit" and ev.exit_code is not None:
                     exit_code = ev.exit_code
         finally:

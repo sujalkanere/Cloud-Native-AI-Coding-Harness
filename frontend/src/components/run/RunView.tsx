@@ -38,7 +38,7 @@ export interface RunViewProps {
 
 export function RunView({ runId, onBack }: RunViewProps) {
   const { run, refetch: refetchRun } = useRunDetails({ runId, pollInterval: 4000 });
-  const { state, connectionStatus } = useRunEvents({ runId, enabled: true });
+  const { state, connectionStatus, dispatch } = useRunEvents({ runId, enabled: true });
 
   const currentStatus: RunStatus = state.status !== "QUEUED" ? state.status : (run?.status ?? "QUEUED");
   const isPausing: boolean = state.isPausing || (run?.is_pausing ?? false);
@@ -260,10 +260,63 @@ export function RunView({ runId, onBack }: RunViewProps) {
     setIsRunningFile(true);
     setBottomTab("terminal");
     setBottomPanelExpanded(true);
+
+    const ts = new Date().toISOString();
+    dispatch({
+      type: "PROCESS_EVENT",
+      event: {
+        seq: Date.now(),
+        ts,
+        type: "terminal_output",
+        payload: {
+          stream: "stdout",
+          data: `\r\n\x1b[1;36m$ ${cmd}\x1b[0m\r\n`,
+        },
+      },
+    });
+
     try {
-      await api.executeCommand(runId, cmd);
+      const res = await api.executeCommand(runId, cmd);
+      if (res.output) {
+        dispatch({
+          type: "PROCESS_EVENT",
+          event: {
+            seq: Date.now() + 1,
+            ts: new Date().toISOString(),
+            type: "terminal_output",
+            payload: {
+              stream: res.exit_code === 0 ? "stdout" : "stderr",
+              data: res.output.endsWith("\n") ? res.output : res.output + "\r\n",
+            },
+          },
+        });
+      } else {
+        dispatch({
+          type: "PROCESS_EVENT",
+          event: {
+            seq: Date.now() + 1,
+            ts: new Date().toISOString(),
+            type: "terminal_output",
+            payload: {
+              stream: "stdout",
+              data: `\x1b[90m(Execution finished with exit code ${res.exit_code})\x1b[0m\r\n`,
+            },
+          },
+        });
+      }
     } catch (err: any) {
-      console.error("Execute file error:", err);
+      dispatch({
+        type: "PROCESS_EVENT",
+        event: {
+          seq: Date.now() + 1,
+          ts: new Date().toISOString(),
+          type: "terminal_output",
+          payload: {
+            stream: "stderr",
+            data: `\x1b[31mExecution error: ${err?.message || err}\x1b[0m\r\n`,
+          },
+        },
+      });
     } finally {
       setIsRunningFile(false);
     }
