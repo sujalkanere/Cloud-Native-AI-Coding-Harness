@@ -150,6 +150,7 @@ class DockerSandboxProvider(ISandboxProvider):
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "PYTHONUNBUFFERED": "1",
                 "PIP_CACHE_DIR": "/tmp/.cache/pip",
+                "PYTHONPATH": "/tmp/pylibs",
                 "NPM_CONFIG_CACHE": "/tmp/.npm",
                 "TMPDIR": "/tmp",
                 "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",

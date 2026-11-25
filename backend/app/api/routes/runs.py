@@ -49,6 +49,23 @@ class ExecuteCommandRequest(BaseModel):
     command: str
 
 
+class UpdateFileContentRequest(BaseModel):
+    path: str
+    content: str
+
+
+class AgentChatRequest(BaseModel):
+    message: str
+    model: str | None = None
+    agent: str | None = None
+    files: list[dict[str, str]] | None = None
+    history: list[dict[str, str]] | None = None
+
+
+class InstallPackagesRequest(BaseModel):
+    packages: list[str]
+
+
 class PauseRequest(BaseModel):
     mode: Literal["boundary", "now"] = "boundary"
 
@@ -162,6 +179,13 @@ async def create_run(
 
     created_run = await container.run_repository.create(run)
 
+    # Multi-agent parallel swarm mode
+    if created_run.options.multi_agent:
+        from backend.app.application.multi_agent import start_swarm_task
+
+        start_swarm_task(created_run, container)
+        return created_run
+
     # Submit to concurrency manager
     if container.concurrency_manager is not None:
         created_run = await container.concurrency_manager.enqueue_or_start(
@@ -269,6 +293,11 @@ async def terminate_run(
         raise EntityNotFoundError(f"Run '{id}' not found")
 
     reason = payload.reason if payload else "User terminated"
+    from backend.app.application.multi_agent import cancel_swarm_task
+
+    if await cancel_swarm_task(id, container, reason=reason):
+        return {"action": "terminated", "changed": True}
+
     if container.concurrency_manager is not None:
         result = await container.concurrency_manager.terminate_run(
             id, user_id=current_user.id, reason=reason
@@ -276,6 +305,31 @@ async def terminate_run(
         return {"action": result.action, "changed": result.changed}
 
     raise HTTPException(status_code=500, detail="Concurrency manager not available")
+
+
+@router.delete("/{id}", response_model=dict[str, Any])
+async def delete_run(
+    id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    container: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    """Deletes a run record (terminating any active sandbox first)."""
+    run = await container.run_repository.get(id, user_id=current_user.id)
+    if run is None:
+        raise EntityNotFoundError(f"Run '{id}' not found")
+
+    if run.status in ("QUEUED", "PREPARING", "RUNNING", "PAUSED") and container.concurrency_manager is not None:
+        try:
+            await container.concurrency_manager.terminate_run(
+                id, user_id=current_user.id, reason="Session deleted"
+            )
+        except Exception:
+            pass
+
+    deleted = await container.run_repository.delete(id, user_id=current_user.id)
+    if not deleted:
+        raise EntityNotFoundError(f"Run '{id}' not found")
+    return {"deleted": True, "id": id}
 
 
 @router.post("/{id}/guidance")
@@ -485,6 +539,281 @@ async def get_run_file_content(
                 return {"path": path, "content": content}
 
     return {"path": path, "content": ""}
+
+
+@router.put("/{id}/files/content", response_model=dict[str, str])
+async def update_run_file_content(
+    id: str,
+    body: UpdateFileContentRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    container: AppContainer = Depends(get_container),
+) -> dict[str, str]:
+    """Updates or creates a file in the run workspace and persists the edit event."""
+    run = await container.run_repository.get(id, user_id=current_user.id)
+    if run is None:
+        raise EntityNotFoundError(f"Run '{id}' not found")
+
+    clean_path = body.path.strip().replace("\\", "/")
+    if not clean_path or clean_path.startswith("/") or ".." in clean_path.split("/"):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    if container.concurrency_manager is not None:
+        handle = container.concurrency_manager.get_handle(id)
+        if handle and getattr(handle.control, "sandbox", None):
+            try:
+                await handle.control.sandbox.write_file(clean_path, body.content)
+            except (OSError, RuntimeError, ValueError, KeyError, AttributeError):
+                pass
+
+    payload = {
+        "type": "tool_call",
+        "payload": {
+            "id": f"user_edit_{uuid.uuid4().hex[:8]}",
+            "name": "write_file",
+            "arguments": {"path": clean_path, "content": body.content},
+        },
+    }
+    if container.concurrency_manager is not None:
+        await container.concurrency_manager.publish_event(id, payload)
+    else:
+        await container.run_repository.append_event(id, payload)
+
+    return {"path": clean_path, "content": body.content}
+
+
+_AGENT_PERSONAS: dict[str, str] = {
+    "designer": (
+        "You are a senior product & UI/UX designer at Meta. Audit layout, typography, "
+        "spacing, color hierarchy, and accessibility, and provide concrete code improvements."
+    ),
+    "tester": (
+        "You are a staff QA & test engineer. Write thorough pytest/vitest unit tests, "
+        "edge-case assertions, and verification steps for the workspace code."
+    ),
+    "architect": (
+        "You are a principal systems architect. Analyze module boundaries, data flow, "
+        "state management, and propose clean, minimal refactors."
+    ),
+    "reviewer": (
+        "You are a senior code reviewer. Check for security issues, race conditions, "
+        "error handling gaps, and edge cases."
+    ),
+    "debugger": (
+        "You are a root-cause debugger. Analyze stack traces, failure modes, and logs, "
+        "and provide exact minimal fixes."
+    ),
+}
+
+
+@router.post("/{id}/chat", response_model=dict[str, str])
+async def chat_with_agent(
+    id: str,
+    body: AgentChatRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    container: AppContainer = Depends(get_container),
+) -> dict[str, str]:
+    """Direct interactive chat with a selectable model and slash-command agent persona."""
+    if not body.message or not body.message.strip():
+        raise HTTPException(status_code=422, detail="Message cannot be empty")
+
+    run = await container.run_repository.get(id, user_id=current_user.id)
+    if run is None:
+        raise EntityNotFoundError(f"Run '{id}' not found")
+
+    from backend.app.config import get_settings
+    from backend.app.domain.interfaces import LLMMessage
+    from backend.app.infrastructure.llm.openai import OpenAIProvider
+
+    settings = get_settings()
+
+    chosen_model = (body.model or settings.effective_llm_model or "openai/gpt-oss-120b").strip()
+    agent_key = (body.agent or "").strip().lower()
+    persona_prompt = _AGENT_PERSONAS.get(
+        agent_key,
+        "You are an expert AI coding assistant embedded in a cloud-native sandbox IDE. Be concise, accurate, and practical.",
+    )
+
+    context_parts = [f"Run ID: {run.id}", f"Run Task: {run.task}", f"Run Status: {run.status}"]
+    if body.files:
+        for f in body.files[:6]:
+            p = f.get("path", "")
+            c = f.get("content", "")
+            if p and c:
+                context_parts.append(f"--- {p} ---\n{c[:4000]}")
+
+    system_msg = f"{persona_prompt}\n\nWorkspace context:\n" + "\n\n".join(context_parts)
+    messages: list[LLMMessage] = [LLMMessage(role="system", content=system_msg)]
+    for item in (body.history or [])[-8:]:
+        role = item.get("role", "user")
+        content = item.get("content", "")
+        if role in ("user", "assistant") and content:
+            messages.append(LLMMessage(role=role, content=content))
+    messages.append(LLMMessage(role="user", content=body.message.strip()))
+
+    # Resolve API key & base URL for selected model
+    api_key = settings.GROQ_API_KEY or settings.APINEX_API_KEY or settings.OPENAI_API_KEY
+    base_url = settings.GROQ_BASE_URL if settings.GROQ_API_KEY else (
+        settings.APINEX_BASE_URL if settings.APINEX_API_KEY else settings.OPENAI_BASE_URL
+    )
+    if chosen_model in ("gpt-4o", "claude-3.5-sonnet") and settings.APINEX_API_KEY:
+        api_key = settings.APINEX_API_KEY
+        base_url = settings.APINEX_BASE_URL
+    elif settings.GROQ_API_KEY and chosen_model not in ("gpt-4o", "claude-3.5-sonnet"):
+        api_key = settings.GROQ_API_KEY
+        base_url = settings.GROQ_BASE_URL
+
+    if not api_key:
+        raise HTTPException(status_code=503, detail="No LLM API key configured on backend")
+
+    provider = OpenAIProvider(api_key=api_key, model=chosen_model, base_url=base_url)
+    try:
+        response = await provider.complete(messages=messages, tools=[])
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"LLM request failed: {exc}") from exc
+
+    return {
+        "reply": response.content or "(No response returned)",
+        "model": chosen_model,
+        "agent": agent_key or "assistant",
+    }
+
+
+@router.post("/{id}/packages/install", response_model=dict[str, Any])
+async def install_session_packages(
+    id: str,
+    body: InstallPackagesRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    container: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    """
+    Downloads user-confirmed PyPI packages on the host and installs them offline
+    into /tmp/pylibs inside the session's isolated sandbox (ephemeral for this session).
+    """
+    import asyncio
+    import io
+    import re
+    import sys
+    import tarfile
+    import tempfile
+    from pathlib import Path
+
+    run = await container.run_repository.get(id, user_id=current_user.id)
+    if run is None:
+        raise EntityNotFoundError(f"Run '{id}' not found")
+
+    if not body.packages:
+        return {"installed": [], "output": "No packages requested."}
+
+    pkg_pattern = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+    clean_packages: list[str] = []
+    for raw in body.packages[:20]:
+        pkg = raw.strip()
+        if not pkg_pattern.fullmatch(pkg):
+            raise HTTPException(status_code=400, detail=f"Invalid package name: '{raw}'")
+        clean_packages.append(pkg)
+
+    sandbox = None
+    if container.concurrency_manager is not None:
+        handle = container.concurrency_manager.get_handle(id)
+        if handle and getattr(handle.control, "sandbox", None):
+            sandbox = handle.control.sandbox
+
+    acquired_temp_sandbox = False
+    if sandbox is None:
+        if container.sandbox_provider is None:
+            raise HTTPException(status_code=503, detail="Sandbox provider not available")
+        sandbox = await container.sandbox_provider.acquire(SandboxSpec(network_mode="none"))
+        acquired_temp_sandbox = True
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wheels_dir = Path(tmpdir) / "wheels"
+            wheels_dir.mkdir(parents=True, exist_ok=True)
+
+            # 1. Stage Linux-compatible wheels on host while keeping sandbox network_mode=none
+            cmd = [
+                sys.executable, "-m", "pip", "download",
+                "--only-binary=:all:", "--python-version", "3.12",
+                "--platform", "manylinux2014_x86_64",
+                "-d", str(wheels_dir),
+                *clean_packages,
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            dl_out, _ = await proc.communicate()
+            if proc.returncode != 0:
+                # Fallback for pure-python / platform-agnostic packages
+                fallback_cmd = [
+                    sys.executable, "-m", "pip", "download",
+                    "--no-binary=:none:",
+                    "-d", str(wheels_dir),
+                    *clean_packages,
+                ]
+                proc2 = await asyncio.create_subprocess_exec(
+                    *fallback_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                dl_out, _ = await proc2.communicate()
+                if proc2.returncode != 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Failed to download packages: {dl_out.decode(errors='replace')[-500:]}",
+                    )
+
+            # 2. Stream wheels into /tmp/wheels inside isolated container
+            if hasattr(sandbox, "container"):
+                buf = io.BytesIO()
+                with tarfile.open(fileobj=buf, mode="w") as tar:
+                    tar.add(str(wheels_dir), arcname="wheels")
+                buf.seek(0)
+                await asyncio.to_thread(sandbox.container.put_archive, "/tmp", buf.getvalue())
+
+            # 3. Install offline inside container to ephemeral /tmp/pylibs
+            pkgs_joined = " ".join(clean_packages)
+            install_cmd = (
+                f"mkdir -p /tmp/pylibs && "
+                f"pip install --no-index --find-links=/tmp/wheels --target /tmp/pylibs {pkgs_joined}"
+            )
+            chunks: list[str] = []
+            exit_code = 0
+            async for ev in sandbox.run(install_cmd, timeout=90.0):
+                if ev.stream in ("stdout", "stderr"):
+                    chunks.append(ev.data)
+                elif ev.stream == "exit" and ev.exit_code is not None:
+                    exit_code = ev.exit_code
+
+            output_text = "".join(chunks)
+            if exit_code != 0:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Sandbox pip install failed: {output_text[-500:]}",
+                )
+
+            return {"installed": clean_packages, "output": output_text}
+    finally:
+        if acquired_temp_sandbox and container.sandbox_provider is not None:
+            await container.sandbox_provider.release(sandbox)
+
+
+@router.post("/{id}/orchestrate", response_model=dict[str, str])
+async def orchestrate_multi_agent(
+    id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    container: AppContainer = Depends(get_container),
+) -> dict[str, str]:
+    """Triggers the 5-agent parallel swarm on an existing run."""
+    from backend.app.application.multi_agent import start_swarm_task
+
+    run = await container.run_repository.get(id, user_id=current_user.id)
+    if run is None:
+        raise EntityNotFoundError(f"Run '{id}' not found")
+
+    start_swarm_task(run, container)
+    return {"status": "orchestrating", "run_id": id}
 
 
 @router.post("/{id}/execute", response_model=dict[str, Any])

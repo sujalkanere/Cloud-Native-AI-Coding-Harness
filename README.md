@@ -1,292 +1,230 @@
 # Cloud-Native AI Coding Harness
 
-An autonomous, full-stack AI coding harness running in isolated, ephemeral Docker sandboxes with live reasoning streaming, interactive terminal control, and side-by-side git diff inspection.
+An autonomous, full-stack AI engineering workbench that runs coding agents and parallel multi-agent swarms inside kernel-isolated, ephemeral Docker micro-sandboxes—paired with an in-browser IDE, live HTML preview, bidirectional PTY shell, side-by-side Git diff inspector, and an Antigravity-style AI agent chat.
 
 ---
 
-## 1. Quickstart
+## Visual Tour
 
-### Prerequisites
-- **OS**: Windows with WSL2 and Docker Desktop installed (or Linux / macOS with Docker Engine).
-- **Tools**: Git, Docker CLI, Docker Compose v2.
-- **API Key**: Anthropic API key (`ANTHROPIC_API_KEY`) or OpenAI API key (`OPENAI_API_KEY`).
+### 1. Landing Workbench & 3D Micro-Sandbox Visualizer
+Asymmetric split hero built on a Graphite dark ramp with an interactive 3D container inspector (`exec`, `patch`, and `pty` views), kernel spec readout, single- or multi-agent run configurator, execution workflow diagram, and persistent session history.
 
-### Step-by-Step Launch
-1. Clone repository and navigate to root:
-   ```bash
-   cd cloud-native-ai-coding-harness
-   ```
-2. Configure environment:
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env` and supply your `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
-3. Start the entire local stack:
-   ```bash
-   docker compose up --build
-   ```
-4. Access the web dashboard:
-   - Web UI: [http://127.0.0.1:3000](http://127.0.0.1:3000)
-   - REST API: [http://127.0.0.1:8000](http://127.0.0.1:8000)
-   - MinIO Console: [http://127.0.0.1:9001](http://127.0.0.1:9001)
+![Landing Page & 3D Micro-Sandbox Hero](docs/images/hero-landing.png)
 
-### Compose Profiles & Environment Modes
-The harness supports three distinct environment modes (`HARNESS_ENV`):
+### 2. Parallel 5-Agent Swarm IDE & Antigravity-Style Agent Chat
+Complex tasks launch 5 specialized agents concurrently inside one shared session (`Planner`, `Research Agent`, `Design Agent`, `Architect`, and `System Designer`) with peer-to-peer discussion, shared context synchronization, workspace explorer, interactive PTY terminal, and a right-hand AI chat panel with model selection and `/` slash commands.
 
-| Environment Mode | Target / Compose Configuration | Auth Provider | LLM Provider | Sandboxes & Security |
-|---|---|---|---|---|
-| **`development`** (default) | `docker compose up --build` | `dev` (no login required, default user `dev_user`) | Real LLM (`anthropic` or `openai` via API key) | Isolated Docker sandboxes (`network=none`, non-root, cap-drop, tmpfs exec, read-only root) |
-| **`test`** | `docker compose -f docker-compose.yml -f docker-compose.test.yml up --build -d` | `dev` or test mock tokens | `scripted` (replays `samples/buggy-calculator/scripted_run.json` without API keys) | Extends backend with test support tools; enables deterministic automated E2E verification |
-| **`production`** | `docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build` | `clerk` (strictly requires valid Clerk JWT with JWKS verification; refuses `dev` auth) | Real LLM (`anthropic` or `openai`); strictly refuses `scripted` provider | Production image excludes test tools; enforces strict TLS, automated secret redaction, and host cgroup OOM defense |
+![Multi-Agent Swarm IDE & Parallel Sub-Agent Windows](docs/images/multi-agent-ide.jpg)
 
 ---
 
-## 2. Architecture & Design Principles
+## Comprehensive System Architecture
 
-### Architecture Diagram
+```mermaid
+flowchart TB
+    subgraph Client["Client Browser (React 18 · TypeScript · Tailwind · XTerm.js)"]
+        Hero["Session Manager & 3D Sandbox Hero"]
+        IDE["IDE Workspace (RunView)"]
+        SwarmUI["Sub-Agents Grid (5 Parallel Windows)"]
+        Editor["Click-to-Edit Code Editor & Sandboxed HTML Preview"]
+        DiffUI["Side-by-Side Git Diff Viewer"]
+        TerminalUI["Bidirectional PTY Terminal (XTerm.js)"]
+        ChatUI["Agent Chat Panel (Model Switcher & /Slash Commands)"]
+    end
 
+    subgraph Proxy["Vite Dev Proxy / Nginx Reverse Proxy"]
+        HTTPProxy["REST /api/* HTTP Proxy"]
+        WSProxy["WebSocket /api/runs/:id/{stream,terminal} Proxy"]
+    end
+
+    subgraph Backend["FastAPI Control Plane (Python 3.12+ · AsyncIO)"]
+        direction TB
+        Routes["API Layer (routes/runs.py, websocket.py, health.py)"]
+        Concurrency["ConcurrencyManager & Monotonic Event Sequencer"]
+        Loop["Single-Agent Coding Loop (agent.py)"]
+        Swarm["5-Agent Parallel Swarm Orchestrator (multi_agent.py)"]
+        PkgMgr["Offline Wheel Staging & /tmp/pylibs Installer"]
+        Domain["Domain Layer (Protocols, State Machine, SSRF Guard, Secrets Redactor)"]
+    end
+
+    subgraph Providers["LLM & External Providers"]
+        GROQ["GROQ API (GPT-OSS 120B, Llama 3.3, Qwen, DeepSeek)"]
+        APINEX["APINEX Gateway (GPT-4o, Claude 3.5 Sonnet)"]
+        StandardLLM["OpenAI / Anthropic / Scripted Replay"]
+    end
+
+    subgraph Persistence["State, Auth & Artifact Storage"]
+        DB[("PostgreSQL / SQLite Async Journal\n(runs, events, artifacts)")]
+        S3[("MinIO / S3 Object Storage\n(patches, logs, transcripts)")]
+        Auth["Auth Provider (Dev / Clerk JWKS)"]
+    end
+
+    subgraph Isolation["Hardened Container Runtime"]
+        DockerAPI["Docker Engine / Tecnativa Socket Proxy / Windows Named Pipe"]
+        Sandbox["Ephemeral Linux Sandbox (harness-sandbox:latest)\n--read-only · --network=none · user 1000:1000\n--cap-drop=ALL · --security-opt no-new-privileges\ntmpfs /workspace (rw,exec) · tmpfs /tmp/pylibs"]
+    end
+
+    Hero & IDE --> HTTPProxy & WSProxy
+    IDE --- SwarmUI & Editor & DiffUI & TerminalUI & ChatUI
+    HTTPProxy & WSProxy --> Routes
+    Routes --> Auth
+    Routes --> Concurrency
+    Concurrency --> Loop & Swarm & PkgMgr
+    Routes --> Domain
+    Loop & Swarm & ChatUI --> GROQ & APINEX & StandardLLM
+    Concurrency --> DB
+    Routes --> S3
+    Loop & Swarm & PkgMgr & TerminalUI --> DockerAPI
+    DockerAPI --> Sandbox
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Client Browser                           │
-│            React 18 + Vite SPA (port 3000)                     │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │ HTTP/WebSocket (nginx proxy → :8000)
-┌──────────────────────────▼──────────────────────────────────────┐
-│                   FastAPI Backend (port 8000)                   │
-│  api/        ──▶  application/  ──▶  domain/ (interfaces)      │
-│                                      ▲                          │
-│  infrastructure/ (adapters) ─────────┘                         │
-│  ├── auth/      (DevAuthProvider, ClerkAuthProvider)            │
-│  ├── llm/       (AnthropicProvider, OpenAIProvider)             │
-│  ├── storage/   (S3ObjectStorage via boto3)                     │
-│  ├── db/        (PostgresRunRepository via SQLAlchemy async)    │
-│  └── sandbox/   (DockerSandboxProvider)                         │
-└──────┬───────────────────┬────────────────────────────────────┬─┘
-       │                   │                                    │
-┌──────▼──────┐  ┌─────────▼─────────┐  ┌──────────────────────▼──┐
-│  Postgres   │  │      MinIO        │  │  docker-socket-proxy    │
-│  (port 5432)│  │  (ports 9000/9001)│  │  (port 2375)            │
-└─────────────┘  └───────────────────┘  └──────────┬──────────────┘
-                                                    │ Docker API
-                                         ┌──────────▼──────────────┐
-                                         │  Sandbox Containers     │
-                                         │  (network=none, tmpfs)  │
-                                         └─────────────────────────┘
-```
 
-### Inward Dependency Flow
-Dependencies point strictly inward:
+### Clean Architecture & Dependency Rule
+All backend dependencies point strictly inward:
+
 `api/` → `application/` → `domain/` ← `infrastructure/`
 
-- **`domain/`**: Pure interfaces (`typing.Protocol` with `@runtime_checkable`), core models, state machines, domain events, and typed errors. Zero framework dependencies.
-- **`application/`**: Agent execution loop, fresh verification logic, git diff calculations against baseline commit SHA, and untrusted archive decompression.
-- **`infrastructure/`**: Adapters implementing domain protocols:
-  - `DockerSandboxProvider` / `DockerSandboxEnvironment` via `docker-socket-proxy`.
-  - `S3ObjectStorage` via `boto3`.
-  - `PostgresRunRepository` via SQLAlchemy 2 async and Alembic.
-  - `DevAuthProvider` and `ClerkAuthProvider` (JWKS/issuer).
-  - `AnthropicProvider`, `OpenAIProvider`, `ScriptedLLMProvider`.
-- **`bootstrap.py`**: Composition root that wires adapters based on validated environment configuration.
-- **`api/`**: FastAPI REST endpoints, WebSocket streaming, and middleware.
-- **`frontend/`**: Vite + React 18 + TypeScript SPA with xterm.js terminal and side-by-side diff viewer.
-
-### Single Backend Architecture
-The harness architecture (in-memory state synchronization, serialized monotonic event sequence assignment, concurrency gating via `MAX_CONCURRENT_RUNS`, and restart recovery) is designed specifically for a single-replica backend instance. Multi-replica deployments are out of scope.
+- **`backend/app/domain/`**: Framework-agnostic `@runtime_checkable` `Protocol` interfaces (`ISandboxProvider`, `ISandboxEnvironment`, `ILLMProvider`, `IRunRepository`, `IObjectStorage`, `IAuthProvider`), Pydantic v2 schemas, run lifecycle state machine, and SSRF / secret redaction guards.
+- **`backend/app/application/`**:
+  - `agent.py`: Autonomous tool-calling execution loop with fresh verification gates and step-boundary pause/resume control.
+  - `multi_agent.py`: **5-Agent Parallel Swarm Orchestrator** executing `asyncio.gather` parallel research/design/architecture phases, cross-agent peer discussions, and a shared session context board (`=== SHARED SESSION CONTEXT ===`) inside one unified `run_id`.
+  - `concurrency.py`: Monotonic gap-free event sequence assignment (`seq = 1, 2, 3...`), WebSocket fan-out, and per-run locking.
+  - `diff.py`: Git diff calculation against the run's baseline commit SHA.
+- **`backend/app/infrastructure/`**: Concrete adapters for Docker sandboxes (`DockerSandboxProvider`), async SQLAlchemy 2 (`PostgresRunRepository` supporting PostgreSQL & SQLite), `OpenAIProvider` / `AnthropicProvider`, S3/MinIO (`S3ObjectStorage`), and `ClerkAuthProvider` / `DevAuthProvider`.
 
 ---
 
-## 3. Fixed Contracts & Endpoints
+## Key Features
 
-### Domain Protocols (`typing.Protocol`, runtime checkable)
-- `IExecutionTerminal`: `run(command, cwd="/workspace", timeout=None) -> AsyncIterator[ExecEvent]`, `cancel_current()`
-- `IFileAccess`: `read_file`, `write_file`, `list_dir`, `upload_workspace(tar_gz)`, `download_workspace() -> tar_gz`
-- `ILogStreamer`: `subscribe() -> AsyncIterator[LogEvent]`
-- `ISandboxEnvironment`: Combines terminal, file access, log streamer, plus `id: str`, `start()`, `stop()`
-- `ISandboxProvider`: `acquire(spec) -> ISandboxEnvironment`
-- `ILLMProvider`: `complete(messages, tools) -> LLMResponse`
-- `IObjectStorage`: `put(key, data)`, `get(key)`, `presigned_url(key, ttl)`
-- `IRunRepository`: `create`, `get`, `list`, `update_status`, `append_event`, `list_events`
-- `IAuthProvider`: `authenticate(request) -> User`
+### Parallel 5-Agent Swarm (Shared Session & Context)
+When **Multi-agent swarm (5 parallel)** is enabled, one shared session spawns 5 dedicated agent windows that collaborate over a synchronized context board:
 
-### Domain Data Models (Pydantic v2 schemas in `backend/app/domain/models.py`)
-- **`Run`**: Core domain entity representing an autonomous coding agent execution:
-  `{id: str, user_id: str, repo_url: str | None, task: str, status: RunStatus, options: RunOptions, is_pausing: bool, baseline_sha: str | None, error_reason: str | None, created_at: datetime, updated_at: datetime}`
-- **`RunEvent`**: Monotonic persisted event schema adhering strictly to Spec §3.3:
-  `{seq: int, ts: datetime, type: str, payload: dict[str, Any]}`
-  (Supported event types: `reasoning`, `plan`, `decision`, `tool_call`, `tool_result`, `terminal_output`, `status_change`, `guidance`, `truncation_marker`, `token_usage`, `sandbox_boot`)
-- **`ExecEvent`**: Real-time terminal execution event emitted during command runs:
-  `{stream: "stdout" | "stderr" | "exit", data: str, exit_code: int | None, timestamp: datetime}`
-- **`LogEvent`**: Telemetry log entry streamed from sandbox container:
-  `{stream: "stdout" | "stderr" | "system", data: str, timestamp: datetime}`
-- **`SandboxSpec`**: Ephemeral container resource limits and runtime specifications:
-  `{image: str, cpu_limit: float, mem_limit: str, pids_limit: int, workspace_size: str, tmp_size: str, network_mode: str, env: dict[str, str]}`
-- **`AuthenticatedUser`** (`User`): Authenticated user entity scoped for strict multi-user isolation:
-  `{id: str, username: str | None, email: str | None}`
-- **`FileDiff`**: Per-file before/after diff for dashboard viewer:
-  `{path: str, status: "modified" | "added" | "deleted" | "renamed" | "binary", additions: int, deletions: int, old_content: str | None, new_content: str | None, diff_patch: str | None}`
-- **`ToolDefinition`**: Function-calling schema definition for the LLM:
-  `{name: str, description: str, parameters: dict[str, Any]}`
-- **`ToolCall`**: Specific tool invocation requested by the LLM:
-  `{id: str, name: str, arguments: dict[str, Any]}`
-- **`LLMResponse`**: Standardized completion output returned by `ILLMProvider.complete`:
-  `{content: str | None, tool_calls: list[ToolCall], prompt_tokens: int, completion_tokens: int, total_tokens: int}`
-- **`RunOptions`**: User-configurable run submission parameters:
-  `{verification: VerificationMode ("required" | "none")}`
+| Agent | Responsibility | Cross-Agent Collaboration |
+|---|---|---|
+| **Planner** | Breaks the prompt into concrete assignments for the swarm | Broadcasts task plan to all agents |
+| **Research Agent** | Analyzes real-world benchmarks, UX flows, and domain content | Shares findings; replies to **System Designer** |
+| **Design Agent** | Defines palette, typography scale, spacing, and UI components | Syncs visual tokens with **Architect** |
+| **Architect** | Chooses tech stack, file layout, and state architecture | Reviews & aligns directly with **Design Agent** |
+| **System Designer** | Synthesizes system design & implements deliverables to `/workspace` | Coordinates with **Architect** & **Research Agent** |
 
-### Lifecycle States
-`QUEUED` → `PREPARING` → `RUNNING` → `PAUSED` → `SUCCEEDED` / `FAILED` / `TERMINATED`
-- Boundary pause sets `is_pausing=True` until step finishes.
-- Calling `resume` during boundary pause cancels the pause and clears `is_pausing`.
-- Repeated control action on matching state returns HTTP 200 (idempotent); invalid transition returns HTTP 409.
+### Kernel-Level Sandbox Security & Containment
+- **No Network Egress**: Sandboxes launch with `--network=none` to eliminate data exfiltration.
+- **Read-Only Root Filesystem**: Container `/` is mounted `--read-only`; only volatile `tmpfs` mounts (`/workspace` and `/tmp`, `uid=1000,gid=1000,mode=1777`) are writable and vanish on teardown.
+- **Unprivileged Execution**: Non-root `UID 1000:1000`, `--cap-drop=ALL`, `--security-opt no-new-privileges:true`, CPU/memory/PID cgroup caps.
+- **Safe Ephemeral `pip install`**: Clicking **Run File** on a Python script with third-party imports prompts the user to confirm; once approved, the backend stages wheels on the host, streams them into `/tmp/wheels`, and runs offline `pip install --no-index --target /tmp/pylibs` inside the network-isolated container.
+- **Zero Host Secret Leakage**: API keys remain exclusively in the FastAPI control plane and are scrubbed by the redactor before reaching logs or UI streams.
 
-### API Endpoints
+### Interactive Browser IDE
+- **Click-to-Edit Code Editor**: Edit workspace files directly in place with synced line numbers, `Tab` indentation, `Ctrl/Cmd+S` save, auto-save on blur, and persistence via `PUT /api/runs/{id}/files/content`.
+- **Sandboxed Live HTML Preview**: `.html`/`.htm` files render immediately in a sandboxed `<iframe sandbox="allow-scripts allow-forms allow-modals">` with a **Preview | Code** toggle.
+- **True Bidirectional PTY Terminal**: XTerm.js streamed over `WS /api/runs/{id}/terminal` to an interactive `/bin/bash` PTY (`tty=True, stdin=True`), supporting interactive CLI apps (`input()`), `pytest`, and shell inspection.
+- **Antigravity-Style Agent Chat**: Collapsible right-hand chat drawer with model switching (`GPT-OSS 120B`, `Llama 3.3 70B`, `Qwen QwQ 32B`, `DeepSeek R1 70B`, `GPT-4o`, `Claude 3.5 Sonnet`), workspace file context toggling, and `/` slash commands (`/designer`, `/tester`, `/architect`, `/reviewer`, `/debugger`, `/clear`).
+- **Diff Viewer & Patch Export**: Side-by-side or unified diffs with local `.patch` file download fallback when S3 isn't configured.
+
+---
+
+## Quickstart
+
+### Prerequisites
+- **Python 3.12+**, **Node.js 20+**
+- **Docker Desktop** (Windows/macOS) or Docker Engine (Linux) for hardened container execution
+- An API key for **GROQ**, **APINEX**, **OpenAI**, or **Anthropic**
+
+### 1. Local Development Setup
+```bash
+git clone https://github.com/sujalkanere/Cloud-Native-AI-Coding-Harness.git
+cd Cloud-Native-AI-Coding-Harness
+
+# Configure environment variables
+cp .env.example .env
+# Edit .env with your LLM provider key (e.g. GROQ_API_KEY, LLM_PROVIDER=groq)
+
+# Build the hardened sandbox image
+docker build -t harness-sandbox:latest ./sandbox
+
+# Install backend & frontend dependencies
+pip install -r backend/requirements.txt
+npm --prefix frontend install
 ```
-POST /api/runs                      Create run {repo_url | archive, task, options}
-GET  /api/runs                      List user runs
-GET  /api/runs/{id}                 Get run details (including is_pausing)
-POST /api/runs/{id}/pause           Pause run {"mode": "boundary" | "now"}
-POST /api/runs/{id}/resume          Resume paused run
-POST /api/runs/{id}/terminate       Halt execution and extract patch before container removal
-POST /api/runs/{id}/guidance        Inject guidance message {"message": str}
-GET  /api/runs/{id}/events?after=seq Poll monotonic event stream
-WS   /api/runs/{id}/stream?after=seq&token=... WebSocket event stream
-GET  /api/runs/{id}/artifacts       Get presigned URLs for patch, logs, transcript
-GET  /api/runs/{id}/diff            Get per-file structured diff
-GET  /healthz                       Liveness probe
-GET  /readyz                        Readiness probe (Postgres, S3, Docker proxy, Sandbox image)
+
+### 2. Run Backend & Frontend
+```bash
+# Terminal 1: FastAPI Control Plane
+uvicorn backend.app.api.main:app --host 127.0.0.1 --port 8000
+
+# Terminal 2: Vite Frontend SPA
+cd frontend && npm run dev -- --host 127.0.0.1 --port 5173
+```
+Open **http://127.0.0.1:5173/** in your browser.
+
+### 3. Docker Compose Stack (Full Infrastructure)
+```bash
+# Development (Dev auth, real LLM, Postgres, MinIO, docker-socket-proxy)
+docker compose up --build
+
+# Production (Clerk JWT auth enforced, test tools stripped)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
 ```
 
 ---
 
-## 4. LLM Providers & Pinned Models
+## API & WebSocket Reference
 
-### Selection Rules
-1. If `LLM_PROVIDER` is set: use that provider (`anthropic`, `openai`, or `scripted`).
-2. If `LLM_PROVIDER` is blank and exactly one API key is set: infer provider.
-3. If both keys are set and `LLM_PROVIDER` is blank: fail fast at startup.
-4. If no key is set and not `scripted`: fail fast at startup.
-
-### Default Pinned Models
-- **Anthropic**: `claude-3-7-sonnet-20250219`
-- **OpenAI**: `gpt-4o`
-
-### Adding a New LLM Provider
-To add a new provider:
-1. Implement `ILLMProvider` in `backend/app/infrastructure/llm/<provider>.py`.
-2. Register the provider in `backend/app/bootstrap.py`.
-3. Zero edits required in the agent loop or application layer.
-
-### WebSocket Protocol
-
-Connect: `WS /api/runs/{id}/stream?after=<seq>&token=<jwt>`
-
-Each message is a JSON event:
-```json
-{"seq": 42, "ts": "2024-01-01T00:00:00Z", "type": "terminal_chunk", "payload": {...}}
-```
-
-Event types: `reasoning`, `plan`, `decision`, `tool_call`, `tool_result`, `terminal_chunk`, `status_change`, `guidance`, `truncation_marker`
-
-Close codes:
-- `4401` — Unauthenticated (no/invalid token)
-- `4404` — Run not found (cross-user or non-existent)
+| Method & Path | Description |
+|---|---|
+| `POST /api/runs` | Create single-agent or 5-agent swarm run (`repo_url`, `archive`, `task`, `options`) |
+| `GET /api/runs` | List all runs scoped to authenticated user |
+| `GET /api/runs/{id}` | Retrieve run status, options, metadata, and error reason |
+| `DELETE /api/runs/{id}` | Terminate active container/swarm and cascade-delete run + events from DB |
+| `POST /api/runs/{id}/orchestrate` | Launch the 5-agent parallel swarm on an existing run |
+| `POST /api/runs/{id}/chat` | Direct contextual chat with model selection & `/` slash-command persona |
+| `POST /api/runs/{id}/pause` | Boundary or immediate pause (`{"mode": "boundary" \| "now"}`) |
+| `POST /api/runs/{id}/resume` | Resume paused run or cancel pending boundary pause |
+| `POST /api/runs/{id}/terminate` | Terminate execution and clean up container |
+| `POST /api/runs/{id}/guidance` | Inject live steering instruction into active run |
+| `GET /api/runs/{id}/files` | List workspace files |
+| `GET /api/runs/{id}/files/content` | Read file content (`?path=...`) |
+| `PUT /api/runs/{id}/files/content` | Persist edited file content to live sandbox and event journal |
+| `POST /api/runs/{id}/packages/install` | Stage wheels on host and install offline into sandbox `/tmp/pylibs` |
+| `POST /api/runs/{id}/execute` | Execute a command inside the sandbox |
+| `GET /api/runs/{id}/diff` | Retrieve structured file diffs against baseline commit SHA |
+| `GET /api/runs/{id}/events?after=seq` | Poll monotonic event stream strictly `> after` |
+| `WS /api/runs/{id}/stream?after=seq` | Real-time monotonic telemetry WebSocket |
+| `WS /api/runs/{id}/terminal` | Real-time bidirectional PTY `/bin/bash` terminal WebSocket |
+| `GET /healthz` / `GET /readyz` | Liveness and dependency readiness probes |
 
 ---
 
-## 5. Environment Variables Reference
+## Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
 | `HARNESS_ENV` | `development` | `development`, `test`, or `production` |
-| `LLM_PROVIDER` | _(blank = infer)_ | `anthropic`, `openai`, or `scripted` |
-| `LLM_MODEL` | _(provider default)_ | Override model (e.g. `claude-3-7-sonnet-20250219`) |
-| `ANTHROPIC_API_KEY` | | Anthropic API key |
-| `OPENAI_API_KEY` | | OpenAI API key |
-| `OPENAI_BASE_URL` | | Override OpenAI base URL |
-| `AUTH_PROVIDER` | `dev` | `dev` or `clerk` |
-| `CLERK_JWKS_URL` | | Clerk JWKS endpoint |
-| `CLERK_ISSUER` | | Clerk JWT issuer |
-| `DATABASE_URL` | | `postgresql+asyncpg://...` |
-| `S3_ENDPOINT_URL` | | S3/MinIO endpoint |
-| `S3_PUBLIC_ENDPOINT_URL` | | Public S3 endpoint for presigned URLs |
-| `S3_BUCKET` | | S3 bucket name |
-| `S3_ACCESS_KEY` | | S3 access key |
-| `S3_SECRET_KEY` | | S3 secret key |
-| `S3_REGION` | | S3 region |
-| `DOCKER_HOST` | `tcp://docker-proxy:2375` | Docker socket proxy URL |
-| `SANDBOX_IMAGE` | `harness-sandbox:latest` | Sandbox container image |
-| `SANDBOX_NETWORK_MODE` | `none` | Container network mode |
-| `SANDBOX_CPU_LIMIT` | `1.0` | CPU limit (cores) |
-| `SANDBOX_MEM_LIMIT` | `1g` | Memory limit |
-| `SANDBOX_PIDS_LIMIT` | `256` | PID limit |
-| `SANDBOX_WARM_POOL_SIZE` | `2` | Idle warm containers |
-| `SANDBOX_WORKSPACE_SIZE` | `384m` | /workspace tmpfs size |
-| `SANDBOX_TMP_SIZE` | `128m` | /tmp tmpfs size |
-| `MAX_CONCURRENT_RUNS` | `4` | Max simultaneous runs |
-| `AGENT_MAX_STEPS` | `40` | Max agent steps per run |
-| `AGENT_MAX_TOKENS` | `200000` | Max total tokens per run |
-| `AGENT_MAX_CONSECUTIVE_FAILURES` | `5` | Max consecutive failures before FAILED |
-| `COMMAND_TIMEOUT_SECONDS` | `120` | Per-command timeout |
-| `MAX_UPLOAD_MB` | `50` | Max archive upload size |
-| `MAX_OUTPUT_BYTES_PER_RUN` | `5242880` | Max terminal output per run (5 MB) |
-| `CORS_ORIGINS` | | Comma-separated allowed CORS origins |
+| `LLM_PROVIDER` | _(inferred)_ | `groq`, `apinex`, `openai`, `anthropic`, or `scripted` |
+| `LLM_MODEL` | _(provider default)_ | e.g. `openai/gpt-oss-120b`, `llama-3.3-70b-versatile`, `gpt-4o` |
+| `GROQ_API_KEY` / `GROQ_BASE_URL` | `https://api.groq.com/openai/v1` | GROQ OpenAI-compatible inference |
+| `APINEX_API_KEY` / `APINEX_BASE_URL` | `https://api.apinex.bond/v1` | APINEX OpenAI-compatible gateway |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | | Direct OpenAI / Anthropic keys |
+| `AUTH_PROVIDER` | `dev` | `dev` or `clerk` (`CLERK_JWKS_URL`, `CLERK_ISSUER`) |
+| `DATABASE_URL` | `sqlite+aiosqlite:///./harness.db` | Async SQLAlchemy connection (`postgresql+asyncpg://...` in prod) |
+| `SANDBOX_PROVIDER` | `docker` | `docker` (hardened containers) or `fake` (unit tests) |
+| `DOCKER_HOST` | `auto` | Auto-discovers Windows named pipe, Unix socket, or TCP proxy |
+| `SANDBOX_IMAGE` | `harness-sandbox:latest` | Hardened Python 3.12 + Node 20 sandbox image |
+| `SANDBOX_NETWORK_MODE` | `none` | Enforces zero outbound egress |
+| `SANDBOX_CPU_LIMIT` / `SANDBOX_MEM_LIMIT` | `1.0` / `1g` | Container resource ceilings |
 
 ---
 
-## 6. Security & Isolation
+## Verification & Test Suites
 
-### Why `/var/run/docker.sock` is NOT Mounted into Backend
-Mounting the host Docker socket into the backend container gives the backend unrestricted root control over the host Docker daemon. Instead, the backend communicates with Docker exclusively through `tecnativa/docker-socket-proxy`, which filters API endpoints and exposes only containers, exec, and image inspect.
-
-### Sandbox Container Hardening
-- **Network Isolation**: `SANDBOX_NETWORK_MODE=none` prevents all outbound exfiltration.
-- **Read-Only Root**: Container root filesystem is mounted `--read-only`.
-- **Privilege Dropping**: Non-root user (uid 1000), `cap-drop ALL`, `no-new-privileges:true`.
-- **Writable Tmpfs**: `/workspace` (384m) and `/tmp` (128m) mounted with `exec,nosuid,nodev`.
-- **Zero Secrets**: Container environment receives zero backend secrets or API keys.
-- **Patch Validation Isolation**: `git apply --check` runs exclusively inside a throwaway sandbox container.
-
----
-
-## 7. Running Tests
-
-### Backend Test Suite
 ```bash
-# Unit and security tests (no Docker daemon required)
-pytest -m "not docker"
+# Backend unit, security, state-machine, and repository tests (240 tests)
+pytest backend/tests/unit -q
 
-# Integration tests (requires Docker daemon)
+# Backend integration tests (requires Docker daemon)
 pytest -m docker
 
-# Linting
-ruff check .
+# Frontend TypeScript check, production build, ESLint, and Vitest suite (59 tests)
+npm --prefix frontend run build
+npm --prefix frontend run lint
+npm --prefix frontend run test
 ```
-
-### Frontend Test Suite
-```bash
-cd frontend
-npm run build
-npm run lint
-npm run test
-```
-
-### End-to-End Verification (`scripts/e2e.py`)
-```bash
-# Automated replay test via scripted LLM (no API key required)
-docker compose -f docker-compose.yml -f docker-compose.test.yml up --build -d
-python scripts/e2e.py --scripted
-
-# Real-LLM test
-python scripts/e2e.py
-```
-
----
-
-## 8. Troubleshooting (Docker Desktop / WSL2 / Windows)
-
-- **Pipe / Socket Connection Errors**:
-  Ensure Docker Desktop is running and WSL2 integration is enabled in Docker Desktop settings (*Settings > Resources > WSL Integration*).
-- **Tmpfs Memory Headroom**:
-  Ensure `SANDBOX_WORKSPACE_SIZE` (384m) + `SANDBOX_TMP_SIZE` (128m) does not exceed 60% of `SANDBOX_MEM_LIMIT` (1g).
-- **Port Conflicts**:
-  All compose services bind to `127.0.0.1`. If ports 3000, 8000, 5432, 9000, or 2375 are already bound by host processes, terminate the conflicting process or adjust port mappings.

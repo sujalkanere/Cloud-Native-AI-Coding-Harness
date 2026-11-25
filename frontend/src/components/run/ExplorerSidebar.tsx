@@ -28,6 +28,7 @@ export interface ExplorerSidebarProps {
   onGuidanceChange: (val: string) => void;
   onSendGuidance: () => void;
   isSendingGuidance: boolean;
+  guidanceFeedback?: { type: "success" | "error"; message: string } | null;
   totalTokens?: number;
   stepCount?: number;
 }
@@ -43,47 +44,46 @@ export const ExplorerSidebar: React.FC<ExplorerSidebarProps> = ({
   onGuidanceChange,
   onSendGuidance,
   isSendingGuidance,
+  guidanceFeedback,
   totalTokens = 0,
   stepCount = 0,
 }) => {
   const getFileIcon = (filename: string) => {
     if (filename.endsWith(".py")) {
-      return <span className="font-bold text-amber-400 text-[10px]">PY</span>;
+      return <span className="font-mono font-medium text-[#d29922] text-[10px]">PY</span>;
     }
     if (filename.endsWith(".rs")) {
-      return <span className="font-bold text-orange-500 text-[10px]">RS</span>;
+      return <span className="font-mono font-medium text-[#e5484d] text-[10px]">RS</span>;
     }
     if (filename.endsWith(".ts") || filename.endsWith(".tsx")) {
-      return <span className="font-bold text-blue-400 text-[10px]">TS</span>;
+      return <span className="font-mono font-medium text-[#2f81f7] text-[10px]">TS</span>;
     }
     if (filename.endsWith(".json")) {
-      return <span className="font-bold text-yellow-300 text-[10px]">{"{}"}</span>;
+      return <span className="font-mono font-medium text-[#a1a1a6] text-[10px]">{"{}"}</span>;
     }
     if (filename.endsWith(".md")) {
-      return <span className="font-bold text-sky-300 text-[10px]">MD</span>;
+      return <span className="font-mono font-medium text-[#a1a1a6] text-[10px]">MD</span>;
     }
-    return <FileCode className="h-3.5 w-3.5 text-slate-400" />;
+    return <FileCode className="h-3.5 w-3.5 text-[#85858b]" strokeWidth={1.5} />;
   };
 
   if (activeView === "files") {
     return (
-      <div className="flex h-full flex-col bg-[#0f172a] border-r border-slate-800 select-none">
-        {/* Explorer Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-800 text-[11px] font-bold tracking-wider text-slate-400 uppercase">
-          <div className="flex items-center space-x-1.5">
-            <FolderOpen className="h-3.5 w-3.5 text-blue-400" />
-            <span>Workspace Files</span>
+      <div className="flex h-full flex-col bg-[#161619] border-r border-white/[0.08] select-none">
+        <div className="flex h-9 items-center justify-between px-4 border-b border-white/[0.08] text-xs font-medium text-[#a1a1a6]">
+          <div className="flex items-center gap-2">
+            <FolderOpen className="h-3.5 w-3.5 text-[#85858b]" strokeWidth={1.5} />
+            <span>Workspace files</span>
           </div>
-          <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] text-slate-300">
+          <span className="font-mono text-[11px] text-[#85858b] tabular-nums">
             {files.length}
           </span>
         </div>
 
-        {/* Files List */}
         <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
           {files.length === 0 ? (
-            <div className="p-4 text-center text-xs text-slate-500">
-              <p className="animate-pulse">Waiting for agent to create files...</p>
+            <div className="p-4 text-center text-xs text-[#85858b]">
+              Waiting for files
             </div>
           ) : (
             files.map((file) => {
@@ -92,13 +92,13 @@ export const ExplorerSidebar: React.FC<ExplorerSidebarProps> = ({
                 <button
                   key={file.path}
                   onClick={() => onSelectFile(file.path)}
-                  className={`flex w-full items-center justify-between rounded px-2.5 py-1.5 text-left text-xs transition-colors ${
+                  className={`flex h-8 w-full items-center justify-between rounded-md px-2.5 text-left text-xs transition-colors ${
                     isSelected
-                      ? "bg-blue-600/20 text-blue-200 border-l-2 border-blue-500 font-medium"
-                      : "text-slate-300 hover:bg-slate-800/60 hover:text-white"
+                      ? "bg-[#1e1e22] text-[#ededed] font-medium border border-white/[0.08]"
+                      : "text-[#a1a1a6] hover:bg-white/[0.04] hover:text-[#ededed] border border-transparent"
                   }`}
                 >
-                  <div className="flex items-center space-x-2 truncate">
+                  <div className="flex items-center gap-2 truncate">
                     <div className="flex h-4 w-4 shrink-0 items-center justify-center">
                       {getFileIcon(file.name)}
                     </div>
@@ -106,12 +106,12 @@ export const ExplorerSidebar: React.FC<ExplorerSidebarProps> = ({
                   </div>
 
                   {file.status === "added" && (
-                    <span className="shrink-0 text-[10px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 rounded px-1.5">
-                      +new
+                    <span className="shrink-0 font-mono text-[10px] text-[#4cc38a]">
+                      new
                     </span>
                   )}
                   {file.status === "modified" && (
-                    <span className="shrink-0 text-[10px] font-mono text-blue-400 bg-blue-950/60 border border-blue-800/40 rounded px-1.5">
+                    <span className="shrink-0 font-mono text-[10px] text-[#2f81f7]">
                       mod
                     </span>
                   )}
@@ -121,19 +121,18 @@ export const ExplorerSidebar: React.FC<ExplorerSidebarProps> = ({
           )}
         </div>
 
-        {/* Summary Footer */}
-        <div className="border-t border-slate-800 p-3 bg-slate-900/60 text-[11px] text-slate-400 space-y-1.5">
+        <div className="border-t border-white/[0.08] p-4 bg-[#111113] text-xs space-y-2 tabular-nums">
           <div className="flex items-center justify-between">
-            <span className="text-slate-500">Task Mode</span>
-            <span className="font-mono text-slate-300">{run?.options?.verification || "required"}</span>
+            <span className="text-[#85858b]">Verification</span>
+            <span className="font-mono text-[#ededed]">{run?.options?.verification || "required"}</span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-slate-500">Total Steps</span>
-            <span className="font-mono text-slate-300">{stepCount}</span>
+            <span className="text-[#85858b]">Steps</span>
+            <span className="font-mono text-[#ededed]">{stepCount}</span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-slate-500">Tokens</span>
-            <span className="font-mono text-slate-300">{totalTokens.toLocaleString()}</span>
+            <span className="text-[#85858b]">Tokens</span>
+            <span className="font-mono text-[#ededed]">{totalTokens.toLocaleString()}</span>
           </div>
         </div>
       </div>
@@ -145,41 +144,39 @@ export const ExplorerSidebar: React.FC<ExplorerSidebarProps> = ({
     const totalDeletions = diffs.reduce((sum, d) => sum + (d.deletions || 0), 0);
 
     return (
-      <div className="flex h-full flex-col bg-[#0f172a] border-r border-slate-800 select-none">
-        {/* Source Control Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-800 text-[11px] font-bold tracking-wider text-slate-400 uppercase">
-          <div className="flex items-center space-x-1.5">
-            <GitBranch className="h-3.5 w-3.5 text-blue-400" />
-            <span>Git Changes</span>
+      <div className="flex h-full flex-col bg-[#161619] border-r border-white/[0.08] select-none">
+        <div className="flex h-9 items-center justify-between px-4 border-b border-white/[0.08] text-xs font-medium text-[#a1a1a6]">
+          <div className="flex items-center gap-2">
+            <GitBranch className="h-3.5 w-3.5 text-[#85858b]" strokeWidth={1.5} />
+            <span>Git changes</span>
           </div>
-          <div className="flex items-center space-x-1 font-mono text-[10px]">
-            <span className="text-emerald-400 font-bold">+{totalAdditions}</span>
-            <span className="text-rose-400 font-bold">-{totalDeletions}</span>
+          <div className="flex items-center gap-1.5 font-mono text-[11px] tabular-nums">
+            <span className="text-[#4cc38a]">+{totalAdditions}</span>
+            <span className="text-[#e5484d]">-{totalDeletions}</span>
           </div>
         </div>
 
-        {/* Diff Changes List */}
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+        <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
           {diffs.length === 0 ? (
-            <div className="p-4 text-center text-xs text-slate-500">
-              <p>No changes detected yet.</p>
+            <div className="p-4 text-center text-xs text-[#85858b]">
+              No changes detected yet
             </div>
           ) : (
             diffs.map((diff) => (
               <button
                 key={diff.path}
                 onClick={() => onSelectFile(`diff:${diff.path}`)}
-                className="flex w-full items-center justify-between rounded px-2.5 py-1.5 text-left text-xs text-slate-300 hover:bg-slate-800/60 hover:text-white transition-colors"
+                className="flex h-8 w-full items-center justify-between rounded-md px-2.5 text-left text-xs text-[#a1a1a6] hover:bg-white/[0.04] hover:text-[#ededed] transition-colors"
               >
-                <div className="flex items-center space-x-2 truncate">
+                <div className="flex items-center gap-2 truncate">
                   <div className="flex h-4 w-4 shrink-0 items-center justify-center">
                     {getFileIcon(diff.path)}
                   </div>
                   <span className="truncate">{diff.path}</span>
                 </div>
-                <div className="flex items-center space-x-1 font-mono text-[10px] shrink-0">
-                  <span className="text-emerald-400">+{diff.additions}</span>
-                  <span className="text-rose-400">-{diff.deletions}</span>
+                <div className="flex items-center gap-1.5 font-mono text-[11px] shrink-0 tabular-nums">
+                  <span className="text-[#4cc38a]">+{diff.additions}</span>
+                  <span className="text-[#e5484d]">-{diff.deletions}</span>
                 </div>
               </button>
             ))
@@ -190,47 +187,71 @@ export const ExplorerSidebar: React.FC<ExplorerSidebarProps> = ({
   }
 
   // Agent Guidance & Controls
+  const isTerminalRun = Boolean(
+    run?.status && ["SUCCEEDED", "FAILED", "TERMINATED"].includes(run.status)
+  );
+
   return (
-    <div className="flex h-full flex-col bg-[#0f172a] border-r border-slate-800 p-4 space-y-4">
-      <div className="flex items-center space-x-2 text-xs font-bold text-slate-300 uppercase tracking-wider">
-        <Sparkles className="h-4 w-4 text-blue-400" />
-        <span>Steer Agent</span>
+    <div className="flex h-full flex-col bg-[#161619] border-r border-white/[0.08] p-4 space-y-4">
+      <div className="flex items-center gap-2 text-xs font-medium text-[#ededed]">
+        <Sparkles className="h-4 w-4 text-[#a1a1a6]" strokeWidth={1.5} />
+        <span>Steer agent</span>
       </div>
 
-      <p className="text-xs text-slate-400 leading-relaxed">
-        Inject direct steering instructions into the running agent loop at the next execution boundary.
+      <p className="text-xs text-[#a1a1a6] leading-relaxed">
+        {isTerminalRun
+          ? "Run has finished. Start a new run or Re-run Task to steer an active agent."
+          : "Inject steering instructions into the running agent loop at the next step boundary."}
       </p>
 
-      <div className="space-y-2">
+      <div className="space-y-2.5">
         <textarea
           value={guidanceText}
           onChange={(e) => onGuidanceChange(e.target.value)}
-          placeholder="e.g. Add unit tests with pytest, make words list configurable..."
-          className="w-full h-28 rounded-lg bg-slate-950 border border-slate-800 p-2.5 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 transition-colors"
+          disabled={isTerminalRun || isSendingGuidance}
+          placeholder={
+            isTerminalRun
+              ? "Guidance disabled for completed runs"
+              : "Add unit tests with pytest..."
+          }
+          className="w-full h-28 rounded-lg bg-[#0b0b0d] border border-white/[0.08] p-3 text-xs text-[#ededed] placeholder:text-[#85858b] disabled:opacity-50 focus:outline-none focus:border-[#2f81f7] transition-colors"
         />
 
         <button
+          type="button"
           onClick={onSendGuidance}
-          disabled={!guidanceText.trim() || isSendingGuidance}
-          className="flex w-full items-center justify-center space-x-1.5 rounded-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 px-4 py-2 text-xs font-semibold text-white transition-colors shadow-sm"
+          disabled={isTerminalRun || !guidanceText.trim() || isSendingGuidance}
+          className="flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-[#ededed] hover:bg-white disabled:opacity-50 px-3 text-xs font-medium text-[#0b0b0d] transition-colors"
         >
-          <Send className="h-3 w-3" />
-          <span>{isSendingGuidance ? "Sending..." : "Send Guidance"}</span>
+          <Send className="h-3 w-3" strokeWidth={1.5} />
+          <span>{isSendingGuidance ? "Sending..." : "Send guidance"}</span>
         </button>
+
+        {guidanceFeedback && (
+          <div
+            className={`rounded-md border px-2.5 py-1.5 text-[11px] ${
+              guidanceFeedback.type === "success"
+                ? "border-[#4cc38a]/30 bg-[#4cc38a]/10 text-[#4cc38a]"
+                : "border-[#e5484d]/30 bg-[#e5484d]/10 text-[#e5484d]"
+            }`}
+          >
+            {guidanceFeedback.message}
+          </div>
+        )}
       </div>
 
-      <div className="rounded-lg bg-slate-900/80 border border-slate-800/80 p-3 space-y-2 text-xs">
-        <div className="flex items-center justify-between text-slate-400">
-          <span>Engine Status</span>
-          <span className="text-emerald-400 font-medium">Ready</span>
+      <div className="rounded-lg bg-[#111113] border border-white/[0.08] p-3 space-y-2 text-xs">
+        <div className="flex items-center justify-between text-[#85858b]">
+          <span>Engine</span>
+          <span className="text-[#4cc38a] font-mono">ready</span>
         </div>
-        <div className="flex items-center justify-between text-slate-400">
+        <div className="flex items-center justify-between text-[#85858b]">
           <span>Provider</span>
-          <span className="text-slate-200 font-mono">GROQ</span>
+          <span className="text-[#ededed] font-mono">groq</span>
         </div>
-        <div className="flex items-center justify-between text-slate-400">
+        <div className="flex items-center justify-between text-[#85858b]">
           <span>Model</span>
-          <span className="text-slate-200 font-mono text-[10px]">openai/gpt-oss-120b</span>
+          <span className="text-[#ededed] font-mono text-[11px]">gpt-oss-120b</span>
         </div>
       </div>
     </div>

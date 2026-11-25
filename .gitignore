@@ -69,9 +69,10 @@ temp-key
 *.sqlite
 *.sqlite3
 
-# Preserve template and documentation
+# Preserve template, docs, and frontend source lib
 !.env.example
 !docs/
+!frontend/src/lib/
 
 # Operating System & Editors
 .DS_Store

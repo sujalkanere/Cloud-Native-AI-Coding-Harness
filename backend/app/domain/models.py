@@ -42,6 +42,7 @@ class RunOptions(BaseModel):
     """Options submitted when creating a run."""
     model_config = ConfigDict(extra="ignore")
     verification: VerificationMode = VerificationMode.REQUIRED
+    multi_agent: bool = False
 
 
 class AuthenticatedUser(BaseModel):

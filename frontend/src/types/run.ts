@@ -16,6 +16,7 @@ export type VerificationMode = "required" | "none";
 
 export interface RunOptions {
   verification?: VerificationMode;
+  multi_agent?: boolean;
 }
 
 export interface Run {
@@ -86,11 +87,16 @@ export type RunEventType =
   | "tool_result"
   | "terminal_output"
   | "truncation_marker"
-  | "guidance";
+  | "guidance"
+  | "agent_status"
+  | "agent_message";
 
 export interface StatusChangePayload {
-  status: RunStatus;
+  status?: RunStatus;
+  new_status?: RunStatus;
+  old_status?: RunStatus;
   error_reason?: string | null;
+  reason?: string | null;
   is_pausing?: boolean;
 }
 

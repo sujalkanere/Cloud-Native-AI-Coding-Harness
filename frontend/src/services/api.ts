@@ -78,6 +78,13 @@ export const api = {
   },
 
   /**
+   * Deletes a run session.
+   */
+  async deleteRun(id: string): Promise<{ deleted: boolean; id: string }> {
+    return request<{ deleted: boolean; id: string }>(`/runs/${id}`, { method: "DELETE" });
+  },
+
+  /**
    * Requests run pause (boundary or now).
    */
   async pauseRun(id: string, mode: PauseMode = "boundary"): Promise<ControlResponse> {
@@ -161,6 +168,57 @@ export const api = {
   async getFileContent(id: string, path: string): Promise<{ path: string; content: string }> {
     return request<{ path: string; content: string }>(`/runs/${id}/files/content?path=${encodeURIComponent(path)}`, {
       method: "GET",
+    });
+  },
+
+  /**
+   * Saves updated file content into the workspace.
+   */
+  async updateFileContent(id: string, path: string, content: string): Promise<{ path: string; content: string }> {
+    return request<{ path: string; content: string }>(`/runs/${id}/files/content`, {
+      method: "PUT",
+      body: JSON.stringify({ path, content }),
+    });
+  },
+
+  /**
+   * Chats directly with an AI agent persona & selected model in run context.
+   */
+  async chatWithAgent(
+    id: string,
+    payload: {
+      message: string;
+      model?: string;
+      agent?: string;
+      files?: Array<{ path: string; content: string }>;
+      history?: Array<{ role: string; content: string }>;
+    }
+  ): Promise<{ reply: string; model: string; agent: string }> {
+    return request<{ reply: string; model: string; agent: string }>(`/runs/${id}/chat`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  /**
+   * Temporarily installs confirmed Python packages into the session's isolated sandbox.
+   */
+  async installPackages(
+    id: string,
+    packages: string[]
+  ): Promise<{ installed: string[]; output: string }> {
+    return request<{ installed: string[]; output: string }>(`/runs/${id}/packages/install`, {
+      method: "POST",
+      body: JSON.stringify({ packages }),
+    });
+  },
+
+  /**
+   * Launches the 5-agent parallel swarm on an existing run.
+   */
+  async orchestrateRun(id: string): Promise<{ status: string; run_id: string }> {
+    return request<{ status: string; run_id: string }>(`/runs/${id}/orchestrate`, {
+      method: "POST",
     });
   },
 

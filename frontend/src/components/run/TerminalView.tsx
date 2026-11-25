@@ -38,8 +38,8 @@ export function TerminalView({
     if (!runId) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.hostname || "127.0.0.1";
-    const wsUrl = `${protocol}//${host}:8000/api/runs/${runId}/terminal`;
+    const host = window.location.host || `${window.location.hostname || "127.0.0.1"}:8000`;
+    const wsUrl = `${protocol}//${host}/api/runs/${runId}/terminal`;
 
     let ws: WebSocket | null = null;
     try {
@@ -63,8 +63,11 @@ export function TerminalView({
     const handleCommandTrigger = (e: Event) => {
       const customEvent = e as CustomEvent<{ command: string }>;
       const cmd = customEvent.detail?.command;
-      if (cmd && ws && ws.readyState === WebSocket.OPEN) {
+      if (!cmd) return;
+      if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(cmd + "\r");
+      } else if (onExecuteRef.current) {
+        onExecuteRef.current(cmd);
       }
     };
     window.addEventListener("execute-terminal-command", handleCommandTrigger);
@@ -84,21 +87,21 @@ export function TerminalView({
 
     const term = new XTerm({
       cursorBlink: true,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+      fontFamily: '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       fontSize: 12,
       theme: {
-        background: "#090d16",
-        foreground: "#e2e8f0",
-        cursor: "#38bdf8",
-        selectionBackground: "#1e3a8a",
-        black: "#0f172a",
-        red: "#f87171",
-        green: "#4ade80",
-        yellow: "#facc15",
-        blue: "#60a5fa",
-        magenta: "#c084fc",
-        cyan: "#38bdf8",
-        white: "#f8fafc",
+        background: "#0b0b0d",
+        foreground: "#ededed",
+        cursor: "#2f81f7",
+        selectionBackground: "rgba(47, 129, 247, 0.28)",
+        black: "#161619",
+        red: "#e5484d",
+        green: "#4cc38a",
+        yellow: "#d29922",
+        blue: "#2f81f7",
+        magenta: "#a1a1a6",
+        cyan: "#2f81f7",
+        white: "#ededed",
       },
       convertEol: true,
       scrollback: 5000,
@@ -227,22 +230,22 @@ export function TerminalView({
   }, [isTruncated, truncationMessage]);
 
   return (
-    <div className="flex flex-col h-full bg-[#090d16]">
+    <div className="flex flex-col h-full bg-[#0b0b0d]">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/70 px-4 py-2">
-        <div className="flex items-center space-x-2">
-          <TerminalIcon className="h-4 w-4 text-emerald-400" />
-          <span className="text-xs font-semibold text-white">Execution Console</span>
+      <div className="flex items-center justify-between border-b border-white/[0.08] bg-[#161619] px-4 py-1.5">
+        <div className="flex items-center gap-2">
+          <TerminalIcon className="h-3.5 w-3.5 text-[#a1a1a6]" strokeWidth={1.5} />
+          <span className="text-xs font-medium text-[#ededed]">Execution console</span>
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center gap-2">
           {isTruncated && (
-            <Badge variant="destructive" className="text-[10px] bg-rose-950 text-rose-300 border-rose-800">
-              <AlertTriangle className="mr-1 h-3 w-3" />
+            <Badge variant="destructive" className="text-[11px] bg-[#e5484d]/10 text-[#e5484d] border-[#e5484d]/40">
+              <AlertTriangle className="mr-1 h-3 w-3" strokeWidth={1.5} />
               Output Capped (5MB)
             </Badge>
           )}
-          <span className="text-[10px] text-slate-500 font-mono">
+          <span className="text-[11px] text-[#85858b] font-mono tabular-nums">
             {chunks.length} chunks
           </span>
         </div>
@@ -269,25 +272,25 @@ export function TerminalView({
             setCommandInput("");
           }
         }}
-        className="flex items-center border-t border-slate-800 bg-[#0d1424] px-3 py-1.5 space-x-2"
+        className="flex items-center border-t border-white/[0.08] bg-[#161619] px-3 py-1.5 gap-2"
       >
-        <div className="flex items-center space-x-1.5 font-mono text-xs text-blue-400 shrink-0 font-bold select-none">
+        <div className="flex items-center font-mono text-xs text-[#2f81f7] shrink-0 font-medium select-none">
           <span>$</span>
         </div>
         <input
           type="text"
           value={commandInput}
           onChange={(e) => setCommandInput(e.target.value)}
-          placeholder="Type command or input (e.g. python hangman.py, pytest, a, b)..."
-          className="flex-1 bg-transparent text-xs font-mono text-slate-100 placeholder:text-slate-600 focus:outline-none"
+          placeholder="Type command or input (e.g. python hangman.py, pytest)..."
+          className="flex-1 bg-transparent text-xs font-mono text-[#ededed] placeholder:text-[#85858b] focus:outline-none"
         />
         <button
           type="submit"
           disabled={!commandInput.trim()}
-          className="rounded-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 px-3 py-1 text-[11px] font-bold text-white transition-colors flex items-center space-x-1 shrink-0"
+          className="rounded-lg bg-[#ededed] hover:bg-white disabled:opacity-40 px-3 py-1 text-xs font-medium text-[#0b0b0d] transition-colors flex items-center gap-1 shrink-0"
         >
           <span>Send</span>
-          <CornerDownLeft className="h-3 w-3" />
+          <CornerDownLeft className="h-3 w-3" strokeWidth={1.5} />
         </button>
       </form>
     </div>

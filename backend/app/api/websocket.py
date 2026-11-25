@@ -126,10 +126,17 @@ async def websocket_terminal(
 
     cleanup_box = False
     if sandbox is None:
-        spec = SandboxSpec(network_mode="none")
-        sandbox = await container.sandbox_provider.acquire(spec)
-        await sandbox.start()
-        cleanup_box = True
+        try:
+            spec = SandboxSpec(network_mode="none")
+            sandbox = await container.sandbox_provider.acquire(spec)
+            await sandbox.start()
+            cleanup_box = True
+        except Exception as exc:
+            await websocket.send_text(
+                f"\r\n\x1b[33m[Sandbox terminal unavailable: {exc}]\x1b[0m\r\n"
+            )
+            await websocket.close(code=1011)
+            return
 
         # Replay write_file events to populate workspace
         events = await container.run_repository.list_events(id)

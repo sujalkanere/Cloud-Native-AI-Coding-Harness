@@ -194,3 +194,18 @@ async def test_recover_stale_runs(repo):
         e.type == "status_change" and e.payload.get("error_reason") == "backend_restarted"
         for e in events_r1
     )
+
+
+@pytest.mark.asyncio
+async def test_delete_run_cascades_events(repo):
+    await repo.create(Run(id="run_del_1", user_id="u1", task="Delete me"))
+    await repo.append_event("run_del_1", {"type": "reasoning", "payload": {"thought": "step 1"}})
+
+    # Cross-user delete must fail
+    assert await repo.delete("run_del_1", user_id="u2") is False
+    assert await repo.get("run_del_1", user_id="u1") is not None
+
+    # Owner delete removes run and cascades events
+    assert await repo.delete("run_del_1", user_id="u1") is True
+    assert await repo.get("run_del_1", user_id="u1") is None
+    assert await repo.list_events("run_del_1") == []

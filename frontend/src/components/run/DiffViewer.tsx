@@ -50,7 +50,7 @@ function parseUnifiedDiffToOldAndNew(diffPatch: string): { oldText: string; newT
   };
 }
 
-export function DiffViewer({ runId, diffs: initialDiffs, onRefresh }: DiffViewerProps) {
+export function DiffViewer({ runId, diffs: initialDiffs, onRefresh: _onRefresh }: DiffViewerProps) {
   const [diffs, setDiffs] = useState<FileDiff[]>(initialDiffs || []);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [splitView, setSplitView] = useState<boolean>(true);
@@ -68,14 +68,15 @@ export function DiffViewer({ runId, diffs: initialDiffs, onRefresh }: DiffViewer
       console.error("Failed to fetch diffs:", err);
     } finally {
       setLoading(false);
-      onRefresh?.();
     }
-  }, [runId, onRefresh]);
+  }, [runId]);
 
   useEffect(() => {
-    if (initialDiffs && initialDiffs.length > 0) {
+    if (initialDiffs !== undefined) {
       setDiffs(initialDiffs);
-      setSelectedPath((prev) => prev || initialDiffs[0].path);
+      if (initialDiffs.length > 0) {
+        setSelectedPath((prev) => prev || initialDiffs[0].path);
+      }
     } else if (runId) {
       fetchDiffs();
     }

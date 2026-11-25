@@ -106,6 +106,19 @@ class PostgresRunRepository(IRunRepository):
             models = res.scalars().all()
             return [self._to_domain_run(m) for m in models]
 
+    async def delete(self, run_id: str, user_id: str | None = None) -> bool:
+        async with self._session_factory() as session:
+            stmt = select(RunModel).where(RunModel.id == run_id)
+            if user_id is not None:
+                stmt = stmt.where(RunModel.user_id == user_id)
+            res = await session.execute(stmt)
+            model = res.scalar_one_or_none()
+            if model is None:
+                return False
+            await session.delete(model)
+            await session.commit()
+            return True
+
     async def update_status(
         self,
         run_id: str,
